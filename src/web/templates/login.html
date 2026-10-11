@@ -15,91 +15,150 @@
 
 <body class="min-h-screen bg-gray-100 flex items-center justify-center p-6">
   <div class="w-full max-w-md">
+    <div class="bg-white shadow p-8 rounded-lg">
 
-    <!-- PANEL LOGIN ------------------------------------------------------- -->
-    <template x-if="view==='login'">
-      <div class="bg-white shadow p-8 rounded-lg">
-        <h1 class="text-2xl font-semibold text-center mb-6">Sign in</h1>
+      <!-- PANEL LOGIN ----------------------------------------------------- -->
+      <template x-if="view==='login'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Sign in</h1>
 
-        <!-- Google -->
-        <button
-          class="w-full flex items-center justify-center gap-2 border border-gray-300 rounded px-4 py-2 mb-6 hover:bg-gray-50 transition"
-          @click="google()">
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" class="h-5">
-          <span>Sign in with Google</span>
-        </button>
-
-        <!-- Email / password -->
-        <form @submit.prevent="login" class="space-y-4">
-          <input x-model="email" type="email" placeholder="Email" required
-                 aria-label="Email" autocomplete="username"
-                 class="w-full border rounded px-3 py-2">
-          <input x-model="password" type="password" placeholder="Password" required
-                 aria-label="Password" autocomplete="current-password"
-                 class="w-full border rounded px-3 py-2">
-          <button type="submit"
-                  class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
-            Sign in
+          <!-- Google -->
+          <button
+            class="w-full flex items-center justify-center gap-2 border border-gray-300 rounded px-4 py-2 mb-6 hover:bg-gray-50 transition"
+            @click="google()">
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" class="h-5">
+            <span>Sign in with Google</span>
           </button>
-        </form>
 
-        <p class="text-sm text-center mt-4">
-          Don't have an account?
-          <a href="#" @click.prevent="view='register'"
-             class="text-blue-600 hover:underline">Sign up</a>
-        </p>
+          <!-- Email / password -->
+          <form @submit.prevent="login" class="space-y-4">
+            <input x-model="email" type="email" placeholder="Email" required
+                   aria-label="Email" autocomplete="username"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="password" type="password" placeholder="Password" required
+                   aria-label="Password" autocomplete="current-password"
+                   class="w-full border rounded px-3 py-2">
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+              Sign in
+            </button>
+          </form>
 
-        <p x-text="error" role="alert" class="text-red-600 text-sm mt-4 text-center"></p>
-      </div>
-    </template>
+          <p class="text-sm text-center mt-4">
+            <a href="#" @click.prevent="show('forgot')"
+               class="text-blue-600 hover:underline">Forgot your password?</a>
+          </p>
 
-    <!-- PANEL REGISTRO ---------------------------------------------------- -->
-    <template x-if="view==='register'">
-      <div class="bg-white shadow p-8 rounded-lg">
-        <h1 class="text-2xl font-semibold text-center mb-6">Create account</h1>
+          <p class="text-sm text-center mt-2">
+            Don't have an account?
+            <a href="#" @click.prevent="show('register')"
+               class="text-blue-600 hover:underline">Sign up</a>
+          </p>
+        </div>
+      </template>
 
-        <form @submit.prevent="register" class="space-y-4">
-          <input x-model="email" type="email" placeholder="Email" required
-                 aria-label="Email" autocomplete="username"
-                 class="w-full border rounded px-3 py-2">
-          <input x-model="password" type="password" placeholder="Password" required
-                 minlength="{{ min_password_length }}"
-                 aria-label="Password" autocomplete="new-password"
-                 class="w-full border rounded px-3 py-2">
-          <input x-model="password2" type="password" placeholder="Confirm password" required
-                 aria-label="Confirm password" autocomplete="new-password"
-                 class="w-full border rounded px-3 py-2">
-          <button type="submit"
-                  class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 transition">
-            Sign up
+      <!-- PANEL REGISTRO -------------------------------------------------- -->
+      <template x-if="view==='register'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Create account</h1>
+
+          <form @submit.prevent="register" class="space-y-4">
+            <input x-model="email" type="email" placeholder="Email" required
+                   aria-label="Email" autocomplete="username"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="password" type="password" placeholder="Password" required
+                   minlength="{{ min_password_length }}"
+                   aria-label="Password" autocomplete="new-password"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="password2" type="password" placeholder="Confirm password" required
+                   aria-label="Confirm password" autocomplete="new-password"
+                   class="w-full border rounded px-3 py-2">
+            <button type="submit"
+                    class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 transition">
+              Sign up
+            </button>
+          </form>
+
+          <p class="text-sm text-center mt-4">
+            Already have an account?
+            <a href="#" @click.prevent="show('login')"
+               class="text-blue-600 hover:underline">Sign in</a>
+          </p>
+        </div>
+      </template>
+
+      <!-- PANEL FORGOT PASSWORD ------------------------------------------- -->
+      <template x-if="view==='forgot'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Reset your password</h1>
+
+          <form @submit.prevent="forgotPassword" class="space-y-4">
+            <input x-model="email" type="email" placeholder="Email" required
+                   aria-label="Email" autocomplete="username"
+                   class="w-full border rounded px-3 py-2">
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+              Send reset link
+            </button>
+          </form>
+
+          <p class="text-sm text-center mt-4">
+            <a href="#" @click.prevent="show('login')"
+               class="text-blue-600 hover:underline">Back to sign in</a>
+          </p>
+        </div>
+      </template>
+
+      <!-- PANEL RESET PASSWORD -------------------------------------------- -->
+      <template x-if="view==='reset'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Choose a new password</h1>
+
+          <form @submit.prevent="resetPassword" class="space-y-4">
+            <input x-model="password" type="password" placeholder="New password" required
+                   minlength="{{ min_password_length }}"
+                   aria-label="New password" autocomplete="new-password"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="password2" type="password" placeholder="Confirm new password" required
+                   aria-label="Confirm new password" autocomplete="new-password"
+                   class="w-full border rounded px-3 py-2">
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+              Save password
+            </button>
+          </form>
+        </div>
+      </template>
+
+      <!-- PANEL DASHBOARD ------------------------------------------------- -->
+      <template x-if="view==='dashboard'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">My account</h1>
+
+          <p class="mb-4"><strong>ID:</strong> <span x-text="user.id"></span></p>
+          <p class="mb-4"><strong>Email:</strong> <span x-text="user.email"></span></p>
+          <p class="mb-6"><strong>Status:</strong> <span x-text="user.is_verified ? 'Verified' : 'Not verified'"></span></p>
+
+          <template x-if="!user.is_verified">
+            <button @click="resendVerification"
+                    class="w-full border border-gray-300 rounded py-2 mb-4 hover:bg-gray-50 transition">
+              Resend verification email
+            </button>
+          </template>
+
+          <button @click="logout"
+                  class="w-full bg-gray-800 text-white py-2 rounded hover:bg-black transition">
+            Sign out
           </button>
-        </form>
+        </div>
+      </template>
 
-        <p class="text-sm text-center mt-4">
-          Already have an account?
-          <a href="#" @click.prevent="view='login'"
-             class="text-blue-600 hover:underline">Sign in</a>
-        </p>
-
-        <p x-text="error" role="alert" class="text-red-600 text-sm mt-4 text-center"></p>
+      <!-- Messages: always in the page, so screen readers announce changes. -->
+      <div class="mt-4 text-sm text-center">
+        <p x-text="error" role="alert" class="text-red-600"></p>
+        <p x-text="notice" role="status" class="text-green-700"></p>
       </div>
-    </template>
-
-    <!-- PANEL DASHBOARD --------------------------------------------------- -->
-    <template x-if="view==='dashboard'">
-      <div class="bg-white shadow p-8 rounded-lg">
-        <h1 class="text-2xl font-semibold text-center mb-6">My account</h1>
-
-        <p class="mb-4"><strong>ID:</strong> <span x-text="user.id"></span></p>
-        <p class="mb-6"><strong>Email:</strong> <span x-text="user.email"></span></p>
-
-        <button @click="logout"
-                class="w-full bg-gray-800 text-white py-2 rounded hover:bg-black transition">
-          Sign out
-        </button>
-      </div>
-    </template>
-
+    </div>
   </div>
 
   <!-- Logic -------------------------------------------------------------- -->
@@ -108,6 +167,8 @@
   const ERROR_MESSAGES = {
     LOGIN_BAD_CREDENTIALS: "Incorrect email or password.",
     REGISTER_USER_ALREADY_EXISTS: "An account with this email already exists.",
+    RESET_PASSWORD_BAD_TOKEN: "This reset link is invalid or has expired. Please request a new one.",
+    VERIFY_USER_BAD_TOKEN: "This verification link is invalid or has expired.",
   };
 
   function errorMessage(error) {
@@ -126,20 +187,31 @@
       /* state ----------------------------------------------------------- */
       view: "login",
       email: "", password: "", password2: "",
-      error: "", user: {},
+      error: "", notice: "", user: {}, resetToken: "",
 
       /* lifecycle ---------------------------------------------------- */
-      init() {
-        // Capture token if it comes from Google (#token=xxx). It travels in the
-        // URL fragment, which is never sent to the server.
-        const t = new URLSearchParams(window.location.hash.slice(1)).get("token");
-        if (t) {
-          localStorage.setItem("token", t);
-          history.replaceState({}, "", window.location.pathname);
-        }
+      async init() {
+        // A link opened in a tab already showing this page only changes the
+        // fragment, so the page doesn't reload: handle it here too.
+        window.addEventListener("hashchange", () => this.openLink());
+        await this.openLink();
+      },
 
-        const token = localStorage.getItem("token");
-        if (token) this.fetchMe();
+      async openLink() {
+        // Links carry their tokens in the URL fragment, which is never sent to the
+        // server: #token (Google sign-in), #reset_token and #verify_token (emails).
+        const params = new URLSearchParams(window.location.hash.slice(1));
+        if (window.location.hash) history.replaceState({}, "", window.location.pathname);
+
+        if (params.get("token")) localStorage.setItem("token", params.get("token"));
+        if (params.get("reset_token")) {
+          this.resetToken = params.get("reset_token");
+          this.show("reset");
+          return;
+        }
+        if (params.get("verify_token")) await this.verifyEmail(params.get("verify_token"));
+
+        if (localStorage.getItem("token")) await this.fetchMe();
       },
 
       /* helpers ---------------------------------------------------------- */
@@ -160,9 +232,14 @@
         return data;
       },
 
+      show(view) {
+        this.view = view;
+        this.error = this.notice = "";
+      },
+
       /* actions --------------------------------------------------------- */
       async register() {
-        this.error = "";
+        this.error = this.notice = "";
         if (this.password !== this.password2) {
           this.error = "Passwords don't match.";
           return;
@@ -173,13 +250,14 @@
             body: JSON.stringify({ email: this.email, password: this.password })
           });
           await this.login();            // login automático
+          if (this.view === "dashboard") this.notice = "We've sent you a link to verify your email.";
         } catch (e) {
           this.error = errorMessage(e);
         }
       },
 
       async login() {
-        this.error = "";
+        this.error = this.notice = "";
         try {
           // fastapi-users' login route expects an OAuth2 form, not JSON.
           const data = await this.api("/auth/jwt/login", {
@@ -205,10 +283,67 @@
         }
       },
 
+      async verifyEmail(token) {
+        this.error = this.notice = "";
+        try {
+          await this.api("/auth/verify", { method: "POST", body: JSON.stringify({ token }) });
+          this.notice = "Your email is verified.";
+        } catch (e) {
+          if (e.detail === "VERIFY_USER_ALREADY_VERIFIED") this.notice = "Your email is already verified.";
+          else this.error = errorMessage(e);
+        }
+      },
+
+      async resendVerification() {
+        this.error = this.notice = "";
+        try {
+          await this.api("/auth/request-verify-token", {
+            method: "POST",
+            body: JSON.stringify({ email: this.user.email })
+          });
+          this.notice = "We've sent you a new verification link.";
+        } catch (e) {
+          this.error = errorMessage(e);
+        }
+      },
+
+      async forgotPassword() {
+        this.error = this.notice = "";
+        try {
+          await this.api("/auth/forgot-password", {
+            method: "POST",
+            body: JSON.stringify({ email: this.email })
+          });
+          // Same answer whether the account exists or not.
+          this.notice = "If an account exists for that email, we've sent a link to reset your password.";
+        } catch (e) {
+          this.error = errorMessage(e);
+        }
+      },
+
+      async resetPassword() {
+        this.error = this.notice = "";
+        if (this.password !== this.password2) {
+          this.error = "Passwords don't match.";
+          return;
+        }
+        try {
+          await this.api("/auth/reset-password", {
+            method: "POST",
+            body: JSON.stringify({ token: this.resetToken, password: this.password })
+          });
+          this.password = this.password2 = this.resetToken = "";
+          this.show("login");
+          this.notice = "Your password has been updated. You can sign in now.";
+        } catch (e) {
+          this.error = errorMessage(e);
+        }
+      },
+
       logout() {
         localStorage.removeItem("token");
         this.email = this.password = this.password2 = "";
-        this.view = "login";
+        this.show("login");
       },
 
       google() {

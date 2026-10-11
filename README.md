@@ -10,7 +10,14 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 
 ## Google sign-in
 
-Google only returns verified emails, so signing in with Google marks the account as verified. If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email.
+Google only returns verified emails, so signing in with Google marks the account as verified. If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email. Accounts that verified their email keep their password.
+
+## Email: verification and password reset
+
+- Signing up sends a verification link; users can sign in before verifying, and the account page lets them ask for a new link. Routes that need a verified email can use `fastapi_users.current_user(active=True, verified=True)`.
+- "Forgot your password?" emails a reset link. Using it also verifies the account, since the link went to that address.
+- Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
+- `[email] BACKEND = "console"` writes emails to the server log instead of sending them (development only). For real delivery set `BACKEND = "smtp"` and the `SMTP_*` settings. To try SMTP locally, a catch-all server such as [Mailpit](https://mailpit.axllent.org/) works: `SMTP_HOST = "127.0.0.1"`, `SMTP_PORT = 1025`, `SMTP_SECURITY = "none"`.
 
 ## Frontend assets
 

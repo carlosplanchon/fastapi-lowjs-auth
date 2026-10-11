@@ -147,6 +147,28 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
     assert response.status_code == 400
 
 
+def test_google_login_keeps_the_password_of_a_verified_account(
+    client, prefix, app_module, monkeypatch, sent_emails
+):
+    response = client.post(
+        f"{prefix}/auth/register",
+        json={"email": "ana@gmail.com", "password": "long-secret"},
+    )
+    assert response.status_code == 201
+    # The owner verified the email, so the password is theirs.
+    token = re.search(r"#verify_token=(\S+)", sent_emails[0][2]).group(1)
+    assert client.post(f"{prefix}/auth/verify", json={"token": token}).status_code == 200
+
+    fake_google_account(monkeypatch, app_module, "ana@gmail.com")
+    assert get_me(client, prefix, google_login(client, prefix)).status_code == 200
+
+    response = client.post(
+        f"{prefix}/auth/jwt/login",
+        data={"username": "ana@gmail.com", "password": "long-secret"},
+    )
+    assert response.status_code == 200
+
+
 def test_google_callback_rejects_bad_state(client, prefix, app_module, monkeypatch):
     async def verify_and_process(request, **kwargs):
         raise AssertionError("the code must not be exchanged without a valid state")

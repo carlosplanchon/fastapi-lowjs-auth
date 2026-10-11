@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, Request, HTTPException
+from fastapi import FastAPI, Depends, Request, HTTPException, BackgroundTasks
 from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPasswordException
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from fastapi_users.db import SQLAlchemyUserDatabase
@@ -27,6 +27,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import mailer
+
 from shared import DB_URL
 
 from shared import GOOGLE_CLIENT_ID
@@ -34,6 +36,7 @@ from shared import GOOGLE_CLIENT_SECRET
 from shared import GOOGLE_REDIRECT_URI
 
 from shared import APP_ROOT_PATH
+from shared import APP_PUBLIC_URL
 
 from shared import JWT_SIGNING_SECRET_KEY
 
@@ -78,9 +81,21 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 MIN_PASSWORD_LENGTH = 8
 
 
+def email_link(name: str, token: str) -> str:
+    # Built from the configured public URL, never from the request's Host header:
+    # a forged Host would make reset links point to an attacker's site.
+    return f"{APP_PUBLIC_URL}{root_prefix}/login#{name}={token}"
+
+
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = JWT_SIGNING_SECRET_KEY
     verification_token_secret = JWT_SIGNING_SECRET_KEY
+
+    def __init__(self, user_db: SQLAlchemyUserDatabase, background_tasks: BackgroundTasks):
+        super().__init__(user_db)
+        # Emails go out after the response: requests don't wait for SMTP, and
+        # forgot-password takes as long for unknown emails as for known ones.
+        self.background_tasks = background_tasks
 
     async def validate_password(self, password: str, user: "UserCreate | User") -> None:
         if len(password) < MIN_PASSWORD_LENGTH:
@@ -88,10 +103,41 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
                 reason=f"Password should be at least {MIN_PASSWORD_LENGTH} characters"
             )
 
+    async def on_after_register(self, user: User, request: Request | None = None) -> None:
+        if not user.is_verified:
+            await self.request_verify(user, request)
+
+    async def on_after_request_verify(self, user: User, token: str, request: Request | None = None) -> None:
+        self.background_tasks.add_task(
+            mailer.send_email,
+            user.email,
+            "Verify your email",
+            "Confirm your email address by opening this link:\n\n"
+            f"{email_link('verify_token', token)}\n\n"
+            f"The link expires in {self.verification_token_lifetime_seconds // 60} minutes.\n",
+        )
+
+    async def on_after_forgot_password(self, user: User, token: str, request: Request | None = None) -> None:
+        self.background_tasks.add_task(
+            mailer.send_email,
+            user.email,
+            "Reset your password",
+            "Choose a new password by opening this link:\n\n"
+            f"{email_link('reset_token', token)}\n\n"
+            f"The link expires in {self.reset_password_token_lifetime_seconds // 60} minutes. "
+            "If you didn't ask to reset your password, you can ignore this email.\n",
+        )
+
+    async def on_after_reset_password(self, user: User, request: Request | None = None) -> None:
+        # The reset link was sent to the account's email, so using it proves the
+        # user owns the address.
+        if not user.is_verified:
+            await self.user_db.update(user, {"is_verified": True})
+
 
 # --> USER MANAGER FACTORY:
-async def get_user_manager(user_db=Depends(get_user_db)):
-    yield UserManager(user_db)
+async def get_user_manager(background_tasks: BackgroundTasks, user_db=Depends(get_user_db)):
+    yield UserManager(user_db, background_tasks)
 
 # --> AUTHENTICATION:
 # Relative, so Swagger's "Authorize" also works when served under ROOT_PATH.
@@ -181,6 +227,16 @@ app.include_router(
     tags=["auth"]
 )
 app.include_router(
+    fastapi_users.get_reset_password_router(),
+    prefix="/auth",
+    tags=["auth"]
+)
+app.include_router(
+    fastapi_users.get_verify_router(UserRead),
+    prefix="/auth",
+    tags=["auth"]
+)
+app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),
     prefix="/users",
     tags=["users"]
@@ -202,7 +258,7 @@ async def login_page(request: Request):
 
 @app.get("/me")
 async def get_me(user: User = Depends(current_active_user)):
-    return {"email": user.email, "id": str(user.id)}
+    return {"email": user.email, "id": str(user.id), "is_verified": user.is_verified}
 
 
 # --> GOOGLE LOGIN:

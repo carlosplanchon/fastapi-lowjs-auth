@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 CONFIG = """
 [app]
 ROOT_PATH = "{root_path}"
+PUBLIC_URL = "https://auth.example"
 
 [database]
 DB_HOST = "db.example"
@@ -23,6 +24,10 @@ JWT_SIGNING_SECRET_KEY = "test-secret-at-least-32-bytes-long"
 GOOGLE_CLIENT_ID = "test-client-id"
 GOOGLE_CLIENT_SECRET = "test-client-secret"
 GOOGLE_REDIRECT_URI = "http://testserver{prefix}/auth/google/callback"
+
+[email]
+BACKEND = "console"
+FROM_ADDRESS = "no-reply@auth.example"
 """
 
 
@@ -38,7 +43,7 @@ def load_shared(tmp_path, monkeypatch):
         monkeypatch.setenv("CONFIG_PATH", str(config))
 
         # The app reads its config at import time, so import it fresh each time.
-        for name in ("shared", "auth_backend_api"):
+        for name in ("shared", "mailer", "auth_backend_api"):
             sys.modules.pop(name, None)
         return importlib.import_module("shared")
 
@@ -62,3 +67,11 @@ def client(app_module):
 @pytest.fixture
 def prefix(app_module):
     return app_module.root_prefix
+
+
+@pytest.fixture
+def sent_emails(app_module, monkeypatch):
+    """Emails the app sends during the test, as (to, subject, body) tuples."""
+    emails = []
+    monkeypatch.setattr(app_module.mailer, "send_email", lambda *email: emails.append(email))
+    return emails

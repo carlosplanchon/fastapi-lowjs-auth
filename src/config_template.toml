@@ -4,6 +4,9 @@
 # Path prefix the app is served under, without slashes (e.g. "myapp").
 # Leave it empty ("") to serve the app at the root.
 ROOT_PATH = "..."
+# Public URL of the site, without ROOT_PATH (e.g. "https://example.com").
+# Links in emails are built from it, never from the request's Host header.
+PUBLIC_URL = "..."
 
 [database]
 DB_HOST = "..."
@@ -21,3 +24,15 @@ JWT_SIGNING_SECRET_KEY = "..."
 GOOGLE_CLIENT_ID     = "..."
 GOOGLE_CLIENT_SECRET = "..."
 GOOGLE_REDIRECT_URI  = "..."
+
+[email]
+# "console" writes emails to the log instead of sending them (development only:
+# the links in them are secrets). "smtp" sends them with the settings below.
+BACKEND = "console"
+FROM_ADDRESS = "..."
+SMTP_HOST = "..."
+SMTP_PORT = 587
+SMTP_USERNAME = "..."
+SMTP_PASSWORD = "..."
+# "starttls" (usually port 587), "ssl" (usually 465) or "none" (local test servers only).
+SMTP_SECURITY = "starttls"

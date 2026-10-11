@@ -42,3 +42,7 @@ GOOGLE_CLIENT_SECRET = CONFIG["google"]["GOOGLE_CLIENT_SECRET"]
 GOOGLE_REDIRECT_URI = CONFIG["google"]["GOOGLE_REDIRECT_URI"]
 
 APP_ROOT_PATH = CONFIG["app"]["ROOT_PATH"]
+# Base of the links in emails; never taken from the request's Host header.
+APP_PUBLIC_URL = CONFIG["app"]["PUBLIC_URL"].rstrip("/")
+
+EMAIL_SETTINGS = CONFIG["email"]
