@@ -176,6 +176,10 @@
     if (typeof detail === "string" && ERROR_MESSAGES[detail]) return ERROR_MESSAGES[detail];
     // e.g. {"code": "REGISTER_INVALID_PASSWORD", "reason": "Password should be ..."}
     if (detail && detail.reason) return detail.reason;
+    if (error.status === 429) {
+      const minutes = Math.max(1, Math.ceil((error.retryAfter || 60) / 60));
+      return `Too many attempts. Please try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+    }
     if (error.status === 422) return "Please enter a valid email address.";
     return "Something went wrong. Please try again.";
   }
@@ -227,6 +231,7 @@
           const error = new Error(`HTTP ${res.status}`);
           error.status = res.status;
           error.detail = data && data.detail;
+          error.retryAfter = Number(res.headers.get("Retry-After"));
           throw error;
         }
         return data;

@@ -36,3 +36,17 @@ SMTP_USERNAME = "..."
 SMTP_PASSWORD = "..."
 # "starttls" (usually port 587), "ssl" (usually 465) or "none" (local test servers only).
 SMTP_SECURITY = "starttls"
+
+# Optional section: these are the defaults.
+[rate_limits]
+# Counters are kept in memory, per process. With several workers, use a shared
+# store, e.g. "redis://localhost:6379" (needs the redis package: uv add redis).
+STORAGE_URI = "memory://"
+# Limits in the "limits" notation: "5/15minutes", "10 per hour", ...
+# Failed sign-ins in a row per IP and email (a successful sign-in resets it).
+LOGIN_FAILURES_PER_ACCOUNT = "5/15minutes"
+LOGIN_ATTEMPTS_PER_IP = "30/15minutes"
+# Password reset and verification emails per address, and their requests per IP.
+EMAILS_PER_ADDRESS = "3/hour"
+EMAIL_REQUESTS_PER_IP = "10/hour"
+REGISTRATIONS_PER_IP = "10/hour"

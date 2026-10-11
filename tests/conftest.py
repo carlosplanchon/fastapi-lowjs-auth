@@ -35,15 +35,16 @@ FROM_ADDRESS = "no-reply@auth.example"
 def load_shared(tmp_path, monkeypatch):
     """Return a function that writes a config.toml and imports shared fresh from it."""
 
-    def load(root_path="", db_password="unused"):
+    def load(root_path="", db_password="unused", extra_config=""):
         # Like a real deployment, Google redirects back to the prefixed callback URL.
         prefix = f"/{root_path}" if root_path else ""
         config = tmp_path / "config.toml"
-        config.write_text(CONFIG.format(root_path=root_path, prefix=prefix, db_password=db_password))
+        config.write_text(CONFIG.format(root_path=root_path, prefix=prefix, db_password=db_password) + extra_config)
         monkeypatch.setenv("CONFIG_PATH", str(config))
 
-        # The app reads its config at import time, so import it fresh each time.
-        for name in ("shared", "mailer", "auth_backend_api"):
+        # The app reads its config at import time (and keeps rate limit counters
+        # in memory), so import it fresh each time.
+        for name in ("shared", "mailer", "rate_limits", "auth_backend_api"):
             sys.modules.pop(name, None)
         return importlib.import_module("shared")
 

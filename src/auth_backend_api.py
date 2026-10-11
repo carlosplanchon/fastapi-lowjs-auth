@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import mailer
+import rate_limits
 
 from shared import DB_URL
 
@@ -134,6 +135,10 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         if not user.is_verified:
             await self.user_db.update(user, {"is_verified": True})
 
+    async def on_after_login(self, user: User, request: Request | None = None, response=None) -> None:
+        if request is not None:
+            await rate_limits.login_succeeded(request, user.email)
+
 
 # --> USER MANAGER FACTORY:
 async def get_user_manager(background_tasks: BackgroundTasks, user_db=Depends(get_user_db)):
@@ -216,25 +221,31 @@ class UserUpdate(schemas.BaseUserUpdate):  # opcional (para /users router)
     pass
 
 
+# Sign-in, registration and the routes that send emails are rate limited
+# (rate_limits.py picks the limits for each route).
 app.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/auth/jwt",
-    tags=["auth"]
+    tags=["auth"],
+    dependencies=[Depends(rate_limits.enforce)]
 )
 app.include_router(
     fastapi_users.get_register_router(UserRead, UserCreate),
     prefix="/auth",
-    tags=["auth"]
+    tags=["auth"],
+    dependencies=[Depends(rate_limits.enforce)]
 )
 app.include_router(
     fastapi_users.get_reset_password_router(),
     prefix="/auth",
-    tags=["auth"]
+    tags=["auth"],
+    dependencies=[Depends(rate_limits.enforce)]
 )
 app.include_router(
     fastapi_users.get_verify_router(UserRead),
     prefix="/auth",
-    tags=["auth"]
+    tags=["auth"],
+    dependencies=[Depends(rate_limits.enforce)]
 )
 app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),

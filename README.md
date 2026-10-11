@@ -19,6 +19,22 @@ Google only returns verified emails, so signing in with Google marks the account
 - Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
 - `[email] BACKEND = "console"` writes emails to the server log instead of sending them (development only). For real delivery set `BACKEND = "smtp"` and the `SMTP_*` settings. To try SMTP locally, a catch-all server such as [Mailpit](https://mailpit.axllent.org/) works: `SMTP_HOST = "127.0.0.1"`, `SMTP_PORT = 1025`, `SMTP_SECURITY = "none"`.
 
+## Rate limiting
+
+Sign-in, registration and the routes that send emails are rate limited. Over a limit, the API answers `429` with a `Retry-After` header.
+
+| Limit | Default |
+|---|---|
+| Failed sign-ins in a row, per IP and email (a successful sign-in resets it) | 5 per 15 minutes |
+| Sign-in attempts per IP | 30 per 15 minutes |
+| Reset and verification emails per address, counted whether the account exists or not | 3 per hour |
+| Reset and verification email requests per IP | 10 per hour |
+| Registrations per IP | 10 per hour |
+
+- Change them in the optional `[rate_limits]` section of `config.toml` (see `config_template.toml`).
+- Counters live in memory, per process. With several workers, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.
+- Behind a reverse proxy, uvicorn must trust it to see the real client IPs. By default it trusts `127.0.0.1` and `::1`; for a proxy elsewhere, set `FORWARDED_ALLOW_IPS` to its address. Don't trust every address if the app can be reached directly: clients could fake their IP with `X-Forwarded-For`.
+
 ## Frontend assets
 
 No CDNs at runtime: the page loads its CSS and JS from `src/web/static/`.

@@ -46,3 +46,6 @@ APP_ROOT_PATH = CONFIG["app"]["ROOT_PATH"]
 APP_PUBLIC_URL = CONFIG["app"]["PUBLIC_URL"].rstrip("/")
 
 EMAIL_SETTINGS = CONFIG["email"]
+
+# Optional: rate_limits.py has defaults for every setting.
+RATE_LIMIT_SETTINGS = CONFIG.get("rate_limits", {})
