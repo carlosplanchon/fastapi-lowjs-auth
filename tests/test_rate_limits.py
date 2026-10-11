@@ -32,6 +32,18 @@ def test_login_blocks_after_five_failures_in_a_row(client, prefix):
     assert_too_many(sign_in(client, prefix))
 
 
+def test_cookie_and_bearer_sign_in_share_the_limit(client, prefix):
+    # Alternating between the two sign-in routes doesn't buy extra attempts.
+    assert register(client, prefix).status_code == 201
+    for backend in ("cookie", "jwt", "cookie", "jwt", "cookie"):
+        response = client.post(
+            f"{prefix}/auth/{backend}/login",
+            data={"username": "ana@example.com", "password": "wrong-password"},
+        )
+        assert response.status_code == 400
+    assert_too_many(sign_in(client, prefix))
+
+
 def test_changing_the_email_case_does_not_get_around_the_limit(client, prefix):
     # Sign-in ignores the email's case, so the limit must too.
     assert register(client, prefix).status_code == 201

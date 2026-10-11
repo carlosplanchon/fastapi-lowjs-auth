@@ -23,6 +23,7 @@ def start_google_login(client, prefix):
 
 
 def google_login(client, prefix):
+    """Sign in with the simulated Google; the session cookie stays in the client."""
     state = start_google_login(client, prefix)
     response = client.get(
         f"{prefix}/auth/google/callback",
@@ -30,19 +31,24 @@ def google_login(client, prefix):
         follow_redirects=False,
     )
     assert response.status_code == 307
-    # The state is single use, and the token travels in the fragment.
+    # Back to the sign-in page with the session in a cookie, not in the URL.
+    assert response.headers["location"] == f"{prefix}/login"
+    assert "session" in client.cookies
+    # The state is single use.
     assert "google_oauth_state" not in client.cookies
-    location = response.headers["location"]
-    assert location.startswith(f"{prefix}/login#token=")
-    return location.split("#token=", 1)[1]
 
 
-def get_me(client, prefix, token):
-    return client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {token}"})
+def bearer(token):
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def get_user(client, prefix, token):
-    return client.get(f"{prefix}/users/me", headers={"Authorization": f"Bearer {token}"})
+def get_me(client, prefix, token=None):
+    """GET /me with a Bearer token, or with the session cookie when there's none."""
+    return client.get(f"{prefix}/me", headers=bearer(token))
+
+
+def get_user(client, prefix, token=None):
+    return client.get(f"{prefix}/users/me", headers=bearer(token))
 
 
 def test_login_page_renders(client, prefix):
@@ -65,7 +71,7 @@ def test_login_page_serves_its_css_and_js_locally(client, prefix):
     urls = re.findall(r'<(?:link|script)[^>]* (?:href|src)="([^"]+)"', html)
     assert urls
     for url in urls:
-        assert url.startswith(f"http://testserver{prefix}/static/")
+        assert url.startswith(f"{str(client.base_url).rstrip('/')}{prefix}/static/")
         response = client.get(url)
         assert response.status_code == 200
         assert response.headers["content-type"].startswith(("text/css", "text/javascript"))
@@ -107,21 +113,23 @@ def test_register_enforces_min_password_length(client, prefix):
 
 def test_google_login_creates_user(client, prefix, app_module, monkeypatch):
     fake_google_account(monkeypatch, app_module, "new@gmail.com")
-    token = google_login(client, prefix)
+    google_login(client, prefix)
 
-    response = get_me(client, prefix, token)
+    response = get_me(client, prefix)
     assert response.status_code == 200
     assert response.json()["email"] == "new@gmail.com"
-    assert get_user(client, prefix, token).json()["is_verified"] is True
+    assert get_user(client, prefix).json()["is_verified"] is True
 
 
 def test_google_login_existing_user(client, prefix, app_module, monkeypatch):
     fake_google_account(monkeypatch, app_module, "back@gmail.com")
 
-    first = get_me(client, prefix, google_login(client, prefix))
+    google_login(client, prefix)
+    first = get_me(client, prefix)
     assert first.status_code == 200
 
-    second = get_me(client, prefix, google_login(client, prefix))
+    google_login(client, prefix)
+    second = get_me(client, prefix)
     assert second.status_code == 200
     assert second.json()["id"] == first.json()["id"]
 
@@ -135,7 +143,8 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
     assert response.status_code == 201
 
     fake_google_account(monkeypatch, app_module, "ana@gmail.com")
-    response = get_user(client, prefix, google_login(client, prefix))
+    google_login(client, prefix)
+    response = get_user(client, prefix)
     assert response.status_code == 200
     assert response.json()["is_verified"] is True
 
@@ -160,7 +169,8 @@ def test_google_login_keeps_the_password_of_a_verified_account(
     assert client.post(f"{prefix}/auth/verify", json={"token": token}).status_code == 200
 
     fake_google_account(monkeypatch, app_module, "ana@gmail.com")
-    assert get_me(client, prefix, google_login(client, prefix)).status_code == 200
+    google_login(client, prefix)
+    assert get_me(client, prefix).status_code == 200
 
     response = client.post(
         f"{prefix}/auth/jwt/login",

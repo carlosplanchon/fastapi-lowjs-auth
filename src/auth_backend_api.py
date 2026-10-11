@@ -12,11 +12,14 @@ from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPas
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users.authentication import AuthenticationBackend
 from fastapi_users.authentication import BearerTransport
+from fastapi_users.authentication import CookieTransport
 from fastapi_users.authentication import JWTStrategy
+from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from fastapi_sso.sso.google import GoogleSSO
 
 from fastapi_users import schemas
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -29,7 +32,9 @@ from fastapi.templating import Jinja2Templates
 
 import mailer
 import rate_limits
-from models import User
+from models import AccessToken, User
+from origin_check import OriginCheckMiddleware
+from sessions import SESSION_LIFETIME_SECONDS, HashedDatabaseStrategy
 
 from shared import DB_URL
 
@@ -70,6 +75,10 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def get_user_db(session: AsyncSession = Depends(get_async_session)):
     yield SQLAlchemyUserDatabase(session, User)
+
+
+async def get_access_token_db(session: AsyncSession = Depends(get_async_session)):
+    yield SQLAlchemyAccessTokenDatabase(session, AccessToken)
 
 
 # --> MANAGER:
@@ -128,6 +137,17 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         # user owns the address.
         if not user.is_verified:
             await self.user_db.update(user, {"is_verified": True})
+        # Whoever knew the old password may have a session: end them all.
+        await self.end_all_sessions(user)
+
+    async def on_after_update(self, user: User, update_dict: dict, request: Request | None = None) -> None:
+        if "password" in update_dict:
+            await self.end_all_sessions(user)
+
+    async def end_all_sessions(self, user: User) -> None:
+        # Browser sessions only: Bearer JWTs can't be revoked and expire on their own.
+        await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
+        await self.user_db.session.commit()
 
     async def on_after_login(self, user: User, request: Request | None = None, response=None) -> None:
         if request is not None:
@@ -139,6 +159,30 @@ async def get_user_manager(background_tasks: BackgroundTasks, user_db=Depends(ge
     yield UserManager(user_db, background_tasks)
 
 # --> AUTHENTICATION:
+# Browsers: an HttpOnly session cookie (JavaScript can't read it) backed by a row
+# in the database, so signing out really ends the session.
+cookie_transport = CookieTransport(
+    cookie_name="session",
+    cookie_max_age=SESSION_LIFETIME_SECONDS,
+    cookie_path=root_prefix or "/",
+    cookie_secure=APP_PUBLIC_URL.startswith("https://"),
+    cookie_httponly=True,
+    cookie_samesite="lax",
+)
+
+
+def get_database_strategy(access_token_db=Depends(get_access_token_db)) -> HashedDatabaseStrategy:
+    return HashedDatabaseStrategy(access_token_db, lifetime_seconds=SESSION_LIFETIME_SECONDS)
+
+
+cookie_backend = AuthenticationBackend(
+    name="cookie",
+    transport=cookie_transport,
+    get_strategy=get_database_strategy
+)
+
+# API clients (scripts, mobile apps, Swagger's "Authorize"): Bearer JWTs. They
+# can't be revoked, so they're short-lived.
 # Relative, so Swagger's "Authorize" also works when served under ROOT_PATH.
 bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
 
@@ -147,7 +191,7 @@ def get_jwt_strategy() -> JWTStrategy:
     return JWTStrategy(secret=JWT_SIGNING_SECRET_KEY, lifetime_seconds=3600)
 
 
-auth_backend = AuthenticationBackend(
+jwt_backend = AuthenticationBackend(
     name="jwt",
     transport=bearer_transport,
     get_strategy=get_jwt_strategy
@@ -156,7 +200,7 @@ auth_backend = AuthenticationBackend(
 # --> FASTAPI USERS:
 fastapi_users = FastAPIUsers[User, uuid.UUID](
     get_user_manager,
-    [auth_backend],
+    [cookie_backend, jwt_backend],
 )
 
 current_active_user = fastapi_users.current_user(active=True)
@@ -196,6 +240,9 @@ app = FastAPI(
 # Compiled Tailwind CSS (build_css.sh) and the pinned Alpine.js build.
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "web" / "static"), name="static")
 
+# Second layer against CSRF: the session cookie is already SameSite=Lax.
+app.add_middleware(OriginCheckMiddleware, public_url=APP_PUBLIC_URL)
+
 
 # --> RUTAS JWT (email/pass):
 # from fastapi_users.schemas import UserCreate, UserRead
@@ -216,7 +263,13 @@ class UserUpdate(schemas.BaseUserUpdate):  # opcional (para /users router)
 # Sign-in, registration and the routes that send emails are rate limited
 # (rate_limits.py picks the limits for each route).
 app.include_router(
-    fastapi_users.get_auth_router(auth_backend),
+    fastapi_users.get_auth_router(cookie_backend),
+    prefix="/auth/cookie",
+    tags=["auth"],
+    dependencies=[Depends(rate_limits.enforce)]
+)
+app.include_router(
+    fastapi_users.get_auth_router(jwt_backend),
     prefix="/auth/jwt",
     tags=["auth"],
     dependencies=[Depends(rate_limits.enforce)]
@@ -268,10 +321,10 @@ async def get_me(user: User = Depends(current_active_user)):
 logger = logging.getLogger(__name__)
 
 
-def back_to_login(fragment: str) -> RedirectResponse:
-    # The token or error goes in the fragment, which browsers never send to the
-    # server, so it stays out of access logs. The state cookie is single use.
-    response = RedirectResponse(f"{root_prefix}/login#{fragment}")
+def back_to_login(error: str | None = None) -> RedirectResponse:
+    # An error goes in the fragment, for the page to show. The state cookie is
+    # single use.
+    response = RedirectResponse(f"{root_prefix}/login" + (f"#error={error}" if error else ""))
     response.delete_cookie(GOOGLE_STATE_COOKIE, **google_state_cookie_options)
     return response
 
@@ -290,16 +343,17 @@ async def google_login():
 @app.get("/auth/google/callback")
 async def google_callback(
     request: Request,
-    user_manager: UserManager = Depends(get_user_manager)
+    user_manager: UserManager = Depends(get_user_manager),
+    strategy: HashedDatabaseStrategy = Depends(get_database_strategy),
         ):
     expected_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
     state = request.query_params.get("state", "")
     if not expected_state or not secrets.compare_digest(state.encode(), expected_state.encode()):
-        return back_to_login("error=GOOGLE_FAILED")
+        return back_to_login("GOOGLE_FAILED")
 
     # Google comes back with ?error=... instead of a code when the user cancels.
     if "error" in request.query_params:
-        return back_to_login("error=GOOGLE_CANCELLED")
+        return back_to_login("GOOGLE_CANCELLED")
 
     try:
         async with google_sso:
@@ -307,10 +361,10 @@ async def google_callback(
     except Exception:
         # An expired code, an email Google hasn't verified, a network error...
         logger.exception("Google sign-in failed")
-        return back_to_login("error=GOOGLE_FAILED")
+        return back_to_login("GOOGLE_FAILED")
 
     if user_info is None:
-        return back_to_login("error=GOOGLE_FAILED")
+        return back_to_login("GOOGLE_FAILED")
 
     # Search or create user. Google only returns verified emails (fastapi-sso
     # rejects the rest), so this login proves the user owns the address.
@@ -333,7 +387,10 @@ async def google_callback(
                 **google_fields
             })
 
-    # Same token as /auth/jwt/login, including the "aud" claim.
-    token = await get_jwt_strategy().write_token(user)
-    return back_to_login(f"token={token}")
-    # return {"access_token": token, "token_type": "bearer"}
+    # The same session cookie as /auth/cookie/login.
+    response = back_to_login()
+    login_response = await cookie_transport.get_login_response(await strategy.write_token(user))
+    for cookie in login_response.headers.getlist("set-cookie"):
+        response.headers.append("set-cookie", cookie)
+    await user_manager.on_after_login(user, request, response)
+    return response

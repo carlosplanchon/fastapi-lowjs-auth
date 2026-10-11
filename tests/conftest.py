@@ -84,7 +84,9 @@ def app_module(request, make_app):
 
 @pytest.fixture
 def client(app_module):
-    with TestClient(app_module.app) as client:
+    # https, like production: with an https PUBLIC_URL the session cookie is
+    # Secure, and the client only sends it back over https.
+    with TestClient(app_module.app, base_url="https://testserver") as client:
         yield client
 
 

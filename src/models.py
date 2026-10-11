@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
+from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
 from sqlalchemy import MetaData
 from sqlalchemy.orm import declarative_base
 
@@ -18,3 +19,7 @@ Base = declarative_base(metadata=MetaData(naming_convention={
 
 class User(SQLAlchemyBaseUserTableUUID, Base):
     pass
+
+
+class AccessToken(SQLAlchemyBaseAccessTokenTableUUID, Base):
+    """A browser session: the hash of its cookie's token (see sessions.py)."""

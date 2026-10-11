@@ -198,6 +198,8 @@
 
       /* lifecycle ---------------------------------------------------- */
       async init() {
+        // Sessions live in an HttpOnly cookie now; drop the token older versions kept here.
+        localStorage.removeItem("token");
         // A link opened in a tab already showing this page only changes the
         // fragment, so the page doesn't reload: handle it here too.
         window.addEventListener("hashchange", () => this.openLink());
@@ -205,13 +207,12 @@
       },
 
       async openLink() {
-        // Links carry their tokens in the URL fragment, which is never sent to the
-        // server: #token or #error (Google sign-in), #reset_token and #verify_token (emails).
+        // Links carry their data in the URL fragment, which is never sent to the
+        // server: #error (Google sign-in), #reset_token and #verify_token (emails).
         const params = new URLSearchParams(window.location.hash.slice(1));
         if (window.location.hash) history.replaceState({}, "", window.location.pathname);
 
         if (params.get("error")) this.error = errorMessage({ detail: params.get("error") });
-        if (params.get("token")) localStorage.setItem("token", params.get("token"));
         if (params.get("reset_token")) {
           this.resetToken = params.get("reset_token");
           this.show("reset");
@@ -219,16 +220,16 @@
         }
         if (params.get("verify_token")) await this.verifyEmail(params.get("verify_token"));
 
-        if (localStorage.getItem("token")) await this.fetchMe();
+        // JavaScript can't see the session cookie: ask the server.
+        await this.fetchMe();
       },
 
       /* helpers ---------------------------------------------------------- */
       async api(path, opts={}) {
-        const token = localStorage.getItem("token");
         const headers = {};
         // JSON bodies are strings; URLSearchParams sets its own Content-Type.
         if (typeof opts.body === "string") headers["Content-Type"] = "application/json";
-        if (token) headers.Authorization = `Bearer ${token}`;
+        // Same-origin requests carry the session cookie on their own.
         const res = await fetch(BASE_URL + path, { headers, ...opts });
         const data = await res.json().catch(() => null);
         if (!res.ok) {
@@ -268,12 +269,12 @@
       async login() {
         this.error = this.notice = "";
         try {
-          // fastapi-users' login route expects an OAuth2 form, not JSON.
-          const data = await this.api("/auth/jwt/login", {
+          // fastapi-users' login route expects an OAuth2 form, not JSON. It answers
+          // with the session cookie.
+          await this.api("/auth/cookie/login", {
             method: "POST",
             body: new URLSearchParams({ username: this.email, password: this.password })
           });
-          localStorage.setItem("token", data.access_token);
           await this.fetchMe();
         } catch (e) {
           this.error = errorMessage(e);
@@ -285,9 +286,8 @@
           this.user = await this.api("/me");
           this.view = "dashboard";
         } catch (e) {
-          // Only drop the token when the server rejects it, not on a network error.
-          if (e.status === 401) localStorage.removeItem("token");
-          else this.error = errorMessage(e);
+          // 401 just means there's no session; anything else is a real error.
+          if (e.status !== 401) this.error = errorMessage(e);
           this.view = "login";
         }
       },
@@ -349,8 +349,17 @@
         }
       },
 
-      logout() {
-        localStorage.removeItem("token");
+      async logout() {
+        try {
+          // Ends the session in the database and clears the cookie.
+          await this.api("/auth/cookie/logout", { method: "POST" });
+        } catch (e) {
+          // Already signed out (401): nothing left to end.
+          if (e.status !== 401) {
+            this.error = errorMessage(e);
+            return;
+          }
+        }
         this.email = this.password = this.password2 = "";
         this.show("login");
       },

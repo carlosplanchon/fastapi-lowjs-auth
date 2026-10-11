@@ -18,6 +18,13 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 - After changing the models in `src/models.py`, run `uv run alembic revision --autogenerate -m "describe the change"`, review the file it creates in `src/migrations/versions/` and commit it. The tests, and so CI, fail if a model change has no migration.
 - A database created before migrations existed (the app used to create its tables itself) already has the tables: run `uv run alembic stamp head` once instead, to mark it as up to date.
 
+## Sessions
+
+- Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
+- Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting or changing the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
+- API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`. Those can't be revoked, so they last one hour.
+- State-changing requests that a browser sends from another site are rejected with `403`: their `Origin` must be `PUBLIC_URL` or the host the request went to. This adds to SameSite and also covers sign-in.
+
 ## Google sign-in
 
 Google only returns verified emails, so signing in with Google marks the account as verified. If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email. Accounts that verified their email keep their password.
