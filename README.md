@@ -12,6 +12,13 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 
 Google only returns verified emails, so signing in with Google marks the account as verified. If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email.
 
+## Frontend assets
+
+No CDNs at runtime: the page loads its CSS and JS from `src/web/static/`.
+
+- CSS: Tailwind v4, compiled from `src/web/tailwind.css`. After changing classes in the templates, run `bash build_css.sh` and commit `src/web/static/app.css`. The script downloads the Tailwind standalone CLI to `.tools/` on first use (no Node.js needed) and checks it against a pinned checksum.
+- Alpine.js: `alpine-3.17.4.min.js`, copied from the npm package. To update it, replace the file and its reference in `login.html`.
+
 ## Tests
 
 `uv run pytest` (uses SQLite and a simulated Google login, no Postgres needed).

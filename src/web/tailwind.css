@@ -1,0 +1,31 @@
+/* Source for src/web/static/app.css. Rebuild it with: bash build_css.sh */
+@import "tailwindcss" source(none);
+@source "./templates";
+
+/* Keep the Tailwind v3 look the templates were designed with. */
+@theme {
+  /* v3's font stack: v4's starts with -apple-system, which picks another font on Linux. */
+  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/* v3 defaults, from the v4 upgrade guide. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+}

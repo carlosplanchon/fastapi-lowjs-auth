@@ -176,3 +176,6 @@ cython_debug/
 src/web/db/docker-compose.yml
 src/config.toml
 
+# Tailwind standalone CLI downloaded by build_css.sh
+.tools/
+

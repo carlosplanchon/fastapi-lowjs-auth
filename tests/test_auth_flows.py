@@ -1,3 +1,4 @@
+import re
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi_sso.sso.base import OpenID
@@ -46,6 +47,18 @@ def get_user(client, prefix, token):
 
 def test_login_page_renders(client, prefix):
     assert client.get(f"{prefix}/login").status_code == 200
+
+
+def test_login_page_serves_its_css_and_js_locally(client, prefix):
+    html = client.get(f"{prefix}/login").text
+    # No development CDNs: every stylesheet and script comes from /static.
+    urls = re.findall(r'<(?:link|script)[^>]* (?:href|src)="([^"]+)"', html)
+    assert urls
+    for url in urls:
+        assert url.startswith(f"http://testserver{prefix}/static/")
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(("text/css", "text/javascript"))
 
 
 def test_password_register_and_login(client, prefix):

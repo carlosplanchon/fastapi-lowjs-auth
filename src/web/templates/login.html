@@ -5,10 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
-  <!-- Tailwind vía CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Alpine.js -->
-  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <!-- Tailwind compilado con build_css.sh -->
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <!-- Alpine.js servido localmente, versión fija -->
+  <script defer src="{{ url_for('static', path='alpine-3.17.4.min.js') }}"></script>
 
   <title>Autenticación</title>
 </head>

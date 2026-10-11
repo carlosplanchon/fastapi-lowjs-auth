@@ -24,6 +24,7 @@ from typing import AsyncGenerator
 from fastapi.responses import RedirectResponse
 
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from shared import DB_URL
@@ -148,6 +149,9 @@ app = FastAPI(
     root_path=root_prefix,
     title=APP_ROOT_PATH.capitalize() or "FastAPI LowJS Auth",
 )
+
+# Compiled Tailwind CSS (build_css.sh) and the pinned Alpine.js build.
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "web" / "static"), name="static")
 
 
 # --> RUTAS JWT (email/pass):
