@@ -7,8 +7,16 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 
 1. `cp src/config_template.toml src/config.toml` and fill it in.
 2. `cp src/web/db/docker-compose_template.yaml src/web/db/docker-compose.yml` and set the same Postgres credentials. `DB_PORT` in `config.toml` must match the published port.
-3. From the repository root: `bash tmux_start_service.sh`. It starts Postgres and the API (`uv run main_api.py` inside `src/`).
+3. From the repository root: `bash tmux_start_service.sh`. It starts Postgres, runs the database migrations (`uv run alembic upgrade head`) and starts the API (`uv run src/main_api.py`).
 4. Open `http://127.0.0.1:8000/login` (`http://127.0.0.1:8000/<ROOT_PATH>/login` if `ROOT_PATH` is set).
+
+## Database migrations
+
+The schema is managed with Alembic (`src/migrations/`): the app doesn't create tables on startup.
+
+- `uv run alembic upgrade head` brings the database up to date. `tmux_start_service.sh` runs it before starting the API.
+- After changing the models in `src/models.py`, run `uv run alembic revision --autogenerate -m "describe the change"`, review the file it creates in `src/migrations/versions/` and commit it. The tests, and so CI, fail if a model change has no migration.
+- A database created before migrations existed (the app used to create its tables itself) already has the tables: run `uv run alembic stamp head` once instead, to mark it as up to date.
 
 ## Google sign-in
 

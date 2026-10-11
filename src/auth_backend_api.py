@@ -9,7 +9,6 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Depends, Request, BackgroundTasks
 from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPasswordException
-from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users.authentication import AuthenticationBackend
 from fastapi_users.authentication import BearerTransport
@@ -19,7 +18,7 @@ from fastapi_sso.sso.google import GoogleSSO
 from fastapi_users import schemas
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from typing import AsyncGenerator
 from fastapi.responses import RedirectResponse
@@ -30,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 
 import mailer
 import rate_limits
+from models import User
 
 from shared import DB_URL
 
@@ -53,15 +53,8 @@ else:
 templates = Jinja2Templates(directory=Path(__file__).parent / "web" / "templates")
 
 
-# --> USER MODEL:
-Base = declarative_base()
-
-
-class User(SQLAlchemyBaseUserTableUUID, Base):
-    pass
-
-
 # --> DB SETUP:
+# The tables come from the Alembic migrations (src/migrations): uv run alembic upgrade head
 engine = create_async_engine(DB_URL, future=True)
 async_session_maker = sessionmaker(
     engine,
@@ -190,8 +183,6 @@ google_state_cookie_options = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     yield
     await engine.dispose()
 

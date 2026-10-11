@@ -1,8 +1,14 @@
 import importlib
 import sys
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
+
+
+ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"
 
 
 CONFIG = """
@@ -51,12 +57,29 @@ def load_shared(tmp_path, monkeypatch):
     return load
 
 
+@pytest.fixture
+def alembic_config():
+    return Config(str(ALEMBIC_INI))
+
+
+@pytest.fixture
+def make_app(tmp_path, load_shared, alembic_config):
+    """Return a function that imports the app on a fresh, migrated SQLite database."""
+
+    def make(**config):
+        shared = load_shared(**config)
+        # Point the DB at a throwaway SQLite file before the app creates its engine,
+        # and create the tables with the same migrations as production.
+        shared.DB_URL = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+        command.upgrade(alembic_config, "head")
+        return importlib.import_module("auth_backend_api")
+
+    return make
+
+
 @pytest.fixture(params=["", "myapp"], ids=["no-root-path", "root-path"])
-def app_module(request, tmp_path, load_shared):
-    shared = load_shared(root_path=request.param)
-    # Point the DB at a throwaway SQLite file before the app creates its engine.
-    shared.DB_URL = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
-    return importlib.import_module("auth_backend_api")
+def app_module(request, make_app):
+    return make_app(root_path=request.param)
 
 
 @pytest.fixture

@@ -1,5 +1,3 @@
-import importlib
-
 from fastapi.testclient import TestClient
 
 
@@ -21,11 +19,9 @@ def assert_too_many(response):
     assert int(response.headers["Retry-After"]) > 0
 
 
-def app_with_limits(load_shared, tmp_path, **limits):
+def app_with_limits(make_app, **limits):
     settings = "".join(f'{name} = "{value}"\n' for name, value in limits.items())
-    shared = load_shared(extra_config=f"\n[rate_limits]\n{settings}")
-    shared.DB_URL = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
-    return importlib.import_module("auth_backend_api").app
+    return make_app(extra_config=f"\n[rate_limits]\n{settings}").app
 
 
 def test_login_blocks_after_five_failures_in_a_row(client, prefix):
@@ -54,9 +50,9 @@ def test_a_successful_login_resets_the_failure_count(client, prefix):
     assert sign_in(client, prefix).status_code == 200
 
 
-def test_login_attempts_are_limited_per_ip_across_accounts(load_shared, tmp_path):
+def test_login_attempts_are_limited_per_ip_across_accounts(make_app):
     # One client trying a password on many accounts (password spraying).
-    with TestClient(app_with_limits(load_shared, tmp_path, LOGIN_ATTEMPTS_PER_IP="3/15minutes")) as client:
+    with TestClient(app_with_limits(make_app, LOGIN_ATTEMPTS_PER_IP="3/15minutes")) as client:
         for n in range(3):
             assert sign_in(client, "", email=f"user{n}@example.com").status_code == 400
         assert_too_many(sign_in(client, "", email="one-more@example.com"))
@@ -91,8 +87,8 @@ def test_other_auth_routes_are_not_limited(client, prefix):
         assert client.post(f"{prefix}/auth/verify", json={"token": "invalid"}).status_code == 400
 
 
-def test_registrations_are_limited_per_ip(load_shared, tmp_path):
-    with TestClient(app_with_limits(load_shared, tmp_path, REGISTRATIONS_PER_IP="2/hour")) as client:
+def test_registrations_are_limited_per_ip(make_app):
+    with TestClient(app_with_limits(make_app, REGISTRATIONS_PER_IP="2/hour")) as client:
         assert register(client, "", email="a@example.com").status_code == 201
         assert register(client, "", email="b@example.com").status_code == 201
         assert_too_many(register(client, "", email="c@example.com"))

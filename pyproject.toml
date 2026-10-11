@@ -5,6 +5,7 @@ description = "LowJS Authentication FastAPI template. Supports Google Authentica
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.20.0",
     "asyncpg>=0.32.0",
     "fastapi>=0.115.12",
     "fastapi-sso>=0.18.0",
