@@ -1,6 +1,6 @@
 {# templates/login.html #}
 <!DOCTYPE html>
-<html lang="es" x-data="authApp()">
+<html lang="en" x-data="authApp()">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -10,7 +10,7 @@
   <!-- Alpine.js servido localmente, versión fija -->
   <script defer src="{{ url_for('static', path='alpine-3.17.4.min.js') }}"></script>
 
-  <title>Autenticación</title>
+  <title>Account</title>
 </head>
 
 <body class="min-h-screen bg-gray-100 flex items-center justify-center p-6">
@@ -19,64 +19,69 @@
     <!-- PANEL LOGIN ------------------------------------------------------- -->
     <template x-if="view==='login'">
       <div class="bg-white shadow p-8 rounded-lg">
-        <h1 class="text-2xl font-semibold text-center mb-6">Iniciar sesión</h1>
+        <h1 class="text-2xl font-semibold text-center mb-6">Sign in</h1>
 
         <!-- Google -->
         <button
           class="w-full flex items-center justify-center gap-2 border border-gray-300 rounded px-4 py-2 mb-6 hover:bg-gray-50 transition"
           @click="google()">
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="h-5">
-          <span>Login with Google</span>
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" class="h-5">
+          <span>Sign in with Google</span>
         </button>
 
         <!-- Email / password -->
         <form @submit.prevent="login" class="space-y-4">
           <input x-model="email" type="email" placeholder="Email" required
+                 aria-label="Email" autocomplete="username"
                  class="w-full border rounded px-3 py-2">
-          <input x-model="password" type="password" placeholder="Contraseña" required
+          <input x-model="password" type="password" placeholder="Password" required
+                 aria-label="Password" autocomplete="current-password"
                  class="w-full border rounded px-3 py-2">
           <button type="submit"
                   class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
-            Login
+            Sign in
           </button>
         </form>
 
         <p class="text-sm text-center mt-4">
           Don't have an account?
           <a href="#" @click.prevent="view='register'"
-             class="text-blue-600 hover:underline">Regístrate</a>
+             class="text-blue-600 hover:underline">Sign up</a>
         </p>
 
-        <p x-text="error" class="text-red-600 text-sm mt-4 text-center"></p>
+        <p x-text="error" role="alert" class="text-red-600 text-sm mt-4 text-center"></p>
       </div>
     </template>
 
     <!-- PANEL REGISTRO ---------------------------------------------------- -->
     <template x-if="view==='register'">
       <div class="bg-white shadow p-8 rounded-lg">
-        <h1 class="text-2xl font-semibold text-center mb-6">Crear cuenta</h1>
+        <h1 class="text-2xl font-semibold text-center mb-6">Create account</h1>
 
         <form @submit.prevent="register" class="space-y-4">
           <input x-model="email" type="email" placeholder="Email" required
+                 aria-label="Email" autocomplete="username"
                  class="w-full border rounded px-3 py-2">
-          <input x-model="password" type="password" placeholder="Contraseña" required
+          <input x-model="password" type="password" placeholder="Password" required
                  minlength="{{ min_password_length }}"
+                 aria-label="Password" autocomplete="new-password"
                  class="w-full border rounded px-3 py-2">
-          <input x-model="password2" type="password" placeholder="Repite contraseña" required
+          <input x-model="password2" type="password" placeholder="Confirm password" required
+                 aria-label="Confirm password" autocomplete="new-password"
                  class="w-full border rounded px-3 py-2">
           <button type="submit"
                   class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 transition">
-            Sign Up
+            Sign up
           </button>
         </form>
 
         <p class="text-sm text-center mt-4">
           Already have an account?
           <a href="#" @click.prevent="view='login'"
-             class="text-blue-600 hover:underline">Login</a>
+             class="text-blue-600 hover:underline">Sign in</a>
         </p>
 
-        <p x-text="error" class="text-red-600 text-sm mt-4 text-center"></p>
+        <p x-text="error" role="alert" class="text-red-600 text-sm mt-4 text-center"></p>
       </div>
     </template>
 
@@ -85,12 +90,12 @@
       <div class="bg-white shadow p-8 rounded-lg">
         <h1 class="text-2xl font-semibold text-center mb-6">My account</h1>
 
-        <p class="mb-4"><strong>ID&nbsp;:</strong> <span x-text="user.id"></span></p>
+        <p class="mb-4"><strong>ID:</strong> <span x-text="user.id"></span></p>
         <p class="mb-6"><strong>Email:</strong> <span x-text="user.email"></span></p>
 
         <button @click="logout"
                 class="w-full bg-gray-800 text-white py-2 rounded hover:bg-black transition">
-          Log out
+          Sign out
         </button>
       </div>
     </template>
@@ -99,6 +104,21 @@
 
   <!-- Logic -------------------------------------------------------------- -->
   <script>
+  // fastapi-users error codes, as messages for people.
+  const ERROR_MESSAGES = {
+    LOGIN_BAD_CREDENTIALS: "Incorrect email or password.",
+    REGISTER_USER_ALREADY_EXISTS: "An account with this email already exists.",
+  };
+
+  function errorMessage(error) {
+    const detail = error.detail;
+    if (typeof detail === "string" && ERROR_MESSAGES[detail]) return ERROR_MESSAGES[detail];
+    // e.g. {"code": "REGISTER_INVALID_PASSWORD", "reason": "Password should be ..."}
+    if (detail && detail.reason) return detail.reason;
+    if (error.status === 422) return "Please enter a valid email address.";
+    return "Something went wrong. Please try again.";
+  }
+
   function authApp() {
     const BASE_URL = "{{ base_url }}";   // <- Returned by FastAPI as str.
 
@@ -130,15 +150,21 @@
         if (typeof opts.body === "string") headers["Content-Type"] = "application/json";
         if (token) headers.Authorization = `Bearer ${token}`;
         const res = await fetch(BASE_URL + path, { headers, ...opts });
-        if (!res.ok) throw new Error(await res.text());
-        return res.json();
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          const error = new Error(`HTTP ${res.status}`);
+          error.status = res.status;
+          error.detail = data && data.detail;
+          throw error;
+        }
+        return data;
       },
 
       /* actions --------------------------------------------------------- */
       async register() {
         this.error = "";
         if (this.password !== this.password2) {
-          this.error = "Las contraseñas no coinciden";
+          this.error = "Passwords don't match.";
           return;
         }
         try {
@@ -148,7 +174,7 @@
           });
           await this.login();            // login automático
         } catch (e) {
-          this.error = e.message;
+          this.error = errorMessage(e);
         }
       },
 
@@ -162,8 +188,8 @@
           });
           localStorage.setItem("token", data.access_token);
           await this.fetchMe();
-        } catch {
-          this.error = "Email o contraseña incorrectos";
+        } catch (e) {
+          this.error = errorMessage(e);
         }
       },
 
@@ -171,8 +197,10 @@
         try {
           this.user = await this.api("/me");
           this.view = "dashboard";
-        } catch {
-          localStorage.removeItem("token");
+        } catch (e) {
+          // Only drop the token when the server rejects it, not on a network error.
+          if (e.status === 401) localStorage.removeItem("token");
+          else this.error = errorMessage(e);
           this.view = "login";
         }
       },

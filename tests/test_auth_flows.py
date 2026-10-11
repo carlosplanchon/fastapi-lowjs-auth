@@ -49,6 +49,16 @@ def test_login_page_renders(client, prefix):
     assert client.get(f"{prefix}/login").status_code == 200
 
 
+def test_login_page_inputs_work_with_screen_readers_and_password_managers(client, prefix):
+    html = client.get(f"{prefix}/login").text
+    assert '<html lang="en"' in html
+    inputs = re.findall(r"<input\b[^>]*>", html)
+    assert inputs
+    for tag in inputs:
+        assert "aria-label=" in tag
+        assert "autocomplete=" in tag
+
+
 def test_login_page_serves_its_css_and_js_locally(client, prefix):
     html = client.get(f"{prefix}/login").text
     # No development CDNs: every stylesheet and script comes from /static.
