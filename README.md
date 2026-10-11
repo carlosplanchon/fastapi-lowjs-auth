@@ -1,4 +1,6 @@
 # fastapi_lowjs_auth
+[![Tests](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml/badge.svg)](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml)
+
 FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + fastapi-sso / HTML + TailwindCSS + AlpineJS
 
 ## Quick start
@@ -45,3 +47,5 @@ No CDNs at runtime: the page loads its CSS and JS from `src/web/static/`.
 ## Tests
 
 `uv run pytest` (uses SQLite and a simulated Google login, no Postgres needed).
+
+GitHub Actions runs them on every push to `main` and every pull request, and also checks that `src/web/static/app.css` matches the templates (`.github/workflows/tests.yml`).

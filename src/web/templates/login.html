@@ -169,6 +169,9 @@
     REGISTER_USER_ALREADY_EXISTS: "An account with this email already exists.",
     RESET_PASSWORD_BAD_TOKEN: "This reset link is invalid or has expired. Please request a new one.",
     VERIFY_USER_BAD_TOKEN: "This verification link is invalid or has expired.",
+    // From the Google callback, which redirects back here with #error=...
+    GOOGLE_CANCELLED: "Google sign-in was cancelled.",
+    GOOGLE_FAILED: "Google sign-in failed. Please try again.",
   };
 
   function errorMessage(error) {
@@ -203,10 +206,11 @@
 
       async openLink() {
         // Links carry their tokens in the URL fragment, which is never sent to the
-        // server: #token (Google sign-in), #reset_token and #verify_token (emails).
+        // server: #token or #error (Google sign-in), #reset_token and #verify_token (emails).
         const params = new URLSearchParams(window.location.hash.slice(1));
         if (window.location.hash) history.replaceState({}, "", window.location.pathname);
 
+        if (params.get("error")) this.error = errorMessage({ detail: params.get("error") });
         if (params.get("token")) localStorage.setItem("token", params.get("token"));
         if (params.get("reset_token")) {
           this.resetToken = params.get("reset_token");

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
+import logging
 import secrets
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, Request, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, Request, BackgroundTasks
 from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPasswordException
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from fastapi_users.db import SQLAlchemyUserDatabase
@@ -273,6 +274,17 @@ async def get_me(user: User = Depends(current_active_user)):
 
 
 # --> GOOGLE LOGIN:
+logger = logging.getLogger(__name__)
+
+
+def back_to_login(fragment: str) -> RedirectResponse:
+    # The token or error goes in the fragment, which browsers never send to the
+    # server, so it stays out of access logs. The state cookie is single use.
+    response = RedirectResponse(f"{root_prefix}/login#{fragment}")
+    response.delete_cookie(GOOGLE_STATE_COOKIE, **google_state_cookie_options)
+    return response
+
+
 @app.get("/auth/google/login")
 async def google_login():
     # A random "state" tied to this browser by a cookie: the callback rejects
@@ -292,13 +304,22 @@ async def google_callback(
     expected_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
     state = request.query_params.get("state", "")
     if not expected_state or not secrets.compare_digest(state.encode(), expected_state.encode()):
-        raise HTTPException(400, "Invalid OAuth state")
+        return back_to_login("error=GOOGLE_FAILED")
 
-    async with google_sso:
-        user_info = await google_sso.verify_and_process(request)
+    # Google comes back with ?error=... instead of a code when the user cancels.
+    if "error" in request.query_params:
+        return back_to_login("error=GOOGLE_CANCELLED")
+
+    try:
+        async with google_sso:
+            user_info = await google_sso.verify_and_process(request)
+    except Exception:
+        # An expired code, an email Google hasn't verified, a network error...
+        logger.exception("Google sign-in failed")
+        return back_to_login("error=GOOGLE_FAILED")
 
     if user_info is None:
-        raise HTTPException(401, "Google login failed")
+        return back_to_login("error=GOOGLE_FAILED")
 
     # Search or create user. Google only returns verified emails (fastapi-sso
     # rejects the rest), so this login proves the user owns the address.
@@ -323,10 +344,5 @@ async def google_callback(
 
     # Same token as /auth/jwt/login, including the "aud" claim.
     token = await get_jwt_strategy().write_token(user)
-
-    # The token goes in the fragment, which browsers never send to the server,
-    # so it stays out of access logs.
-    response = RedirectResponse(f"{root_prefix}/login#token={token}")
-    response.delete_cookie(GOOGLE_STATE_COOKIE, **google_state_cookie_options)
-    return response
+    return back_to_login(f"token={token}")
     # return {"access_token": token, "token_type": "bearer"}
