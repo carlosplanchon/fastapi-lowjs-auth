@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 from pathlib import Path
 
 import tomllib
@@ -8,7 +9,10 @@ import tomllib
 ##################
 # --- CONFIG --- #
 ##################
-with Path("config.toml").open(mode="rb") as fp:
+# config.toml next to this file; CONFIG_PATH overrides it (used by the tests).
+CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", Path(__file__).parent / "config.toml"))
+
+with CONFIG_PATH.open(mode="rb") as fp:
     CONFIG = tomllib.load(fp)
 
 

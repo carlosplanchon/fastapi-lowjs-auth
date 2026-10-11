@@ -1,6 +1,8 @@
 # Change the name to config.toml fill with the appropiate values in production.
 
 [app]
+# Path prefix the app is served under, without slashes (e.g. "myapp").
+# Leave it empty ("") to serve the app at the root.
 ROOT_PATH = "..."
 
 [database]

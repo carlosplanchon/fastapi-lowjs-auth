@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import uuid
-import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager
@@ -13,8 +13,6 @@ from fastapi_users.authentication import JWTStrategy
 from fastapi_sso.sso.google import GoogleSSO
 
 from fastapi_users import schemas
-
-from jose import jwt
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -43,7 +41,7 @@ else:
 
 
 # --> CONFIG TEMPLATES:
-templates = Jinja2Templates(directory="web/templates")
+templates = Jinja2Templates(directory=Path(__file__).parent / "web" / "templates")
 
 
 # --> USER MODEL:
@@ -116,8 +114,8 @@ google_sso = GoogleSSO(
 
 app = FastAPI(
     # lifespan=lifespan,
-    root_path=f"/{APP_ROOT_PATH}",
-    title=APP_ROOT_PATH.capitalize(),
+    root_path=root_prefix,
+    title=APP_ROOT_PATH.capitalize() or "FastAPI LowJS Auth",
 )
 
 
@@ -187,7 +185,7 @@ async def google_login():
 @app.get("/auth/google/callback")
 async def google_callback(
     request: Request,
-    session: AsyncSession = Depends(get_async_session)
+    user_manager: UserManager = Depends(get_user_manager)
         ):
     async with google_sso:
         user_info = await google_sso.verify_and_process(request)
@@ -196,22 +194,19 @@ async def google_callback(
         raise HTTPException(401, "Google login failed")
 
     # Search or create user:
-    user_db = SQLAlchemyUserDatabase(session, User)
-    user = await user_db.get_by_email(user_info.email)
+    user = await user_manager.user_db.get_by_email(user_info.email)
     if not user:
-        user = await user_db.create({
+        # Google users have no local password: store the hash of a random one,
+        # as fastapi-users' own OAuth callback does.
+        password = user_manager.password_helper.generate()
+        user = await user_manager.user_db.create({
             "email": user_info.email,
-            "hashed_password": None,
+            "hashed_password": user_manager.password_helper.hash(password),
             "is_active": True
         })
 
-    # Sign the JWT manually as you would do with fastapi-users.
-    exp = datetime.datetime.utcnow() + datetime.timedelta(seconds=3600)
-    token = jwt.encode(
-        {"sub": str(user.id), "exp": exp},
-        JWT_SIGNING_SECRET_KEY,
-        algorithm="HS256"
-    )
+    # Same token as /auth/jwt/login, including the "aud" claim.
+    token = await get_jwt_strategy().write_token(user)
 
-    return RedirectResponse(f"/login?token={token}")
+    return RedirectResponse(f"{root_prefix}/login?token={token}")
     # return {"access_token": token, "token_type": "bearer"}

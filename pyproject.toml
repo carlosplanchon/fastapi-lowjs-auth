@@ -5,14 +5,22 @@ description = "LowJS Authentication FastAPI template. Supports Google Authentica
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "asyncpg>=0.32.0",
     "fastapi>=0.115.12",
     "fastapi-sso>=0.18.0",
-    "fastapi-users>=14.0.1",
-    "python-jose>=3.4.0",
+    "fastapi-users[sqlalchemy]>=14.0.1",
+    "jinja2>=3.1.6",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "ipython>=9.2.0",
     "prettyprinter>=0.18.0",
+    "pytest>=9.1.1",
 ]
+
+[tool.pytest]
+pythonpath = ["src"]
+testpaths = ["tests"]

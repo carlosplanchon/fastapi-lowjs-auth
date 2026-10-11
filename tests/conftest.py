@@ -1,0 +1,53 @@
+import importlib
+import sys
+
+import pytest
+from fastapi.testclient import TestClient
+
+
+CONFIG = """
+[app]
+ROOT_PATH = "{root_path}"
+
+[database]
+DB_HOST = "unused"
+DB_PORT = 5432
+DB_NAME = "unused"
+DB_USERNAME = "unused"
+DB_PASSWORD = "unused"
+
+[security]
+JWT_SIGNING_SECRET_KEY = "test-secret-at-least-32-bytes-long"
+
+[google]
+GOOGLE_CLIENT_ID = "test-client-id"
+GOOGLE_CLIENT_SECRET = "test-client-secret"
+GOOGLE_REDIRECT_URI = "http://testserver/auth/google/callback"
+"""
+
+
+@pytest.fixture(params=["", "myapp"], ids=["no-root-path", "root-path"])
+def app_module(request, tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text(CONFIG.format(root_path=request.param))
+    monkeypatch.setenv("CONFIG_PATH", str(config))
+
+    # The app reads its config and DB URL at import time, so import it fresh
+    # for each config, with the DB pointed at a throwaway SQLite file.
+    for name in ("shared", "auth_backend_api"):
+        sys.modules.pop(name, None)
+    shared = importlib.import_module("shared")
+    shared.DB_URL = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+    return importlib.import_module("auth_backend_api")
+
+
+@pytest.fixture
+def client(app_module):
+    with TestClient(app_module.app) as client:
+        yield client
+        client.portal.call(app_module.engine.dispose)
+
+
+@pytest.fixture
+def prefix(app_module):
+    return app_module.root_prefix
