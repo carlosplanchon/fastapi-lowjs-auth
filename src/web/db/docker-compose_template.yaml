@@ -4,8 +4,8 @@ services:
   postgres:
     image: postgres:17-alpine
     ports:
-      # yourport:5432
-      - 5432:5432
+      # 127.0.0.1:yourport:5432. Localhost only: Docker bypasses host firewalls like ufw.
+      - 127.0.0.1:5432:5432
     volumes:
       # Change yourproject to your project name.
       - ~/apps/postgres_yourproject:/var/lib/postgresql/data

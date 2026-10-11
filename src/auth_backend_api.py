@@ -2,11 +2,12 @@
 
 import secrets
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Depends, Request, HTTPException
-from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager
+from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPasswordException
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users.authentication import AuthenticationBackend
@@ -73,9 +74,18 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 
 
 # --> MANAGER:
+MIN_PASSWORD_LENGTH = 8
+
+
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = JWT_SIGNING_SECRET_KEY
     verification_token_secret = JWT_SIGNING_SECRET_KEY
+
+    async def validate_password(self, password: str, user: "UserCreate | User") -> None:
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise InvalidPasswordException(
+                reason=f"Password should be at least {MIN_PASSWORD_LENGTH} characters"
+            )
 
 
 # --> USER MANAGER FACTORY:
@@ -83,7 +93,8 @@ async def get_user_manager(user_db=Depends(get_user_db)):
     yield UserManager(user_db)
 
 # --> AUTHENTICATION:
-bearer_transport = BearerTransport(tokenUrl="/auth/jwt/login")
+# Relative, so Swagger's "Authorize" also works when served under ROOT_PATH.
+bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
 
 
 def get_jwt_strategy() -> JWTStrategy:
@@ -124,17 +135,19 @@ google_state_cookie_options = {
 # --> APP SETUP:
 # app = FastAPI()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    await engine.dispose()
+
+
 app = FastAPI(
-    # lifespan=lifespan,
+    lifespan=lifespan,
     root_path=root_prefix,
     title=APP_ROOT_PATH.capitalize() or "FastAPI LowJS Auth",
 )
-
-
-@app.on_event("startup")
-async def on_startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
 
 # --> RUTAS JWT (email/pass):
@@ -174,10 +187,11 @@ app.include_router(
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
-            "request": request,
             "base_url": str(request.base_url).rstrip("/"),
+            "min_password_length": MIN_PASSWORD_LENGTH,
         }
     )
 

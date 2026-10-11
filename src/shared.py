@@ -5,6 +5,8 @@ from pathlib import Path
 
 import tomllib
 
+from sqlalchemy import URL
+
 
 ##################
 # --- CONFIG --- #
@@ -19,10 +21,18 @@ with CONFIG_PATH.open(mode="rb") as fp:
 DB_USERNAME: str = CONFIG["database"]["DB_USERNAME"]
 DB_PASSWORD: str = CONFIG["database"]["DB_PASSWORD"]
 DB_HOST: str = CONFIG["database"]["DB_HOST"]
-DB_PORT: str = CONFIG["database"]["DB_PORT"]
+DB_PORT: int = CONFIG["database"]["DB_PORT"]
 DB_NAME: str = CONFIG["database"]["DB_NAME"]
 
-DB_URL: str = f"postgresql+asyncpg://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# URL.create escapes the credentials, so a password with "@", "/" or "#" still works.
+DB_URL: URL = URL.create(
+    "postgresql+asyncpg",
+    username=DB_USERNAME,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=DB_PORT,
+    database=DB_NAME,
+)
 
 # used to sign JWTs, make sure it is really secret.
 JWT_SIGNING_SECRET_KEY = CONFIG["security"]["JWT_SIGNING_SECRET_KEY"]

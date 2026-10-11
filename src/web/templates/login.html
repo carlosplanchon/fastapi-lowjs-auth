@@ -1,6 +1,6 @@
 {# templates/login.html #}
 <!DOCTYPE html>
-<html lang="es" x-data="authApp()" x-init="init()">
+<html lang="es" x-data="authApp()">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -60,6 +60,7 @@
           <input x-model="email" type="email" placeholder="Email" required
                  class="w-full border rounded px-3 py-2">
           <input x-model="password" type="password" placeholder="Contraseña" required
+                 minlength="{{ min_password_length }}"
                  class="w-full border rounded px-3 py-2">
           <input x-model="password2" type="password" placeholder="Repite contraseña" required
                  class="w-full border rounded px-3 py-2">

@@ -51,20 +51,35 @@ def test_login_page_renders(client, prefix):
 def test_password_register_and_login(client, prefix):
     response = client.post(
         f"{prefix}/auth/register",
-        json={"email": "ana@example.com", "password": "secret"},
+        json={"email": "ana@example.com", "password": "long-secret"},
     )
     assert response.status_code == 201
 
     # Sent as a form, like login.html does: fastapi-users rejects JSON here.
     response = client.post(
         f"{prefix}/auth/jwt/login",
-        data={"username": "ana@example.com", "password": "secret"},
+        data={"username": "ana@example.com", "password": "long-secret"},
     )
     assert response.status_code == 200
 
     response = get_me(client, prefix, response.json()["access_token"])
     assert response.status_code == 200
     assert response.json()["email"] == "ana@example.com"
+
+
+def test_register_enforces_min_password_length(client, prefix):
+    response = client.post(
+        f"{prefix}/auth/register",
+        json={"email": "ana@example.com", "password": "1234567"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "REGISTER_INVALID_PASSWORD"
+
+    response = client.post(
+        f"{prefix}/auth/register",
+        json={"email": "ana@example.com", "password": "12345678"},
+    )
+    assert response.status_code == 201
 
 
 def test_google_login_creates_user(client, prefix, app_module, monkeypatch):
@@ -92,7 +107,7 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
     # Someone registers the email with a password first: it may be an attacker.
     response = client.post(
         f"{prefix}/auth/register",
-        json={"email": "ana@gmail.com", "password": "secret"},
+        json={"email": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 201
 
@@ -104,7 +119,7 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
     # Google wins: the password set before no longer works.
     response = client.post(
         f"{prefix}/auth/jwt/login",
-        data={"username": "ana@gmail.com", "password": "secret"},
+        data={"username": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 400
 
