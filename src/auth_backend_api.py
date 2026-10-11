@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
+import secrets
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager
@@ -109,6 +111,16 @@ google_sso = GoogleSSO(
     redirect_uri=GOOGLE_REDIRECT_URI
 )
 
+# Cookie holding the OAuth "state", only sent back to the callback URL.
+GOOGLE_STATE_COOKIE = "google_oauth_state"
+google_state_cookie_options = {
+    "path": urlsplit(GOOGLE_REDIRECT_URI).path or "/",
+    "secure": GOOGLE_REDIRECT_URI.startswith("https://"),
+    "httponly": True,
+    # "lax" still sends it on the top-level redirect back from Google.
+    "samesite": "lax",
+}
+
 # --> APP SETUP:
 # app = FastAPI()
 
@@ -178,8 +190,13 @@ async def get_me(user: User = Depends(current_active_user)):
 # --> GOOGLE LOGIN:
 @app.get("/auth/google/login")
 async def google_login():
+    # A random "state" tied to this browser by a cookie: the callback rejects
+    # logins this browser didn't start (login CSRF).
+    state = secrets.token_urlsafe(32)
     async with google_sso:
-        return await google_sso.get_login_redirect()
+        response = await google_sso.get_login_redirect(state=state)
+    response.set_cookie(GOOGLE_STATE_COOKIE, state, max_age=600, **google_state_cookie_options)
+    return response
 
 
 @app.get("/auth/google/callback")
@@ -187,26 +204,44 @@ async def google_callback(
     request: Request,
     user_manager: UserManager = Depends(get_user_manager)
         ):
+    expected_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
+    state = request.query_params.get("state", "")
+    if not expected_state or not secrets.compare_digest(state.encode(), expected_state.encode()):
+        raise HTTPException(400, "Invalid OAuth state")
+
     async with google_sso:
         user_info = await google_sso.verify_and_process(request)
 
     if user_info is None:
         raise HTTPException(401, "Google login failed")
 
-    # Search or create user:
+    # Search or create user. Google only returns verified emails (fastapi-sso
+    # rejects the rest), so this login proves the user owns the address.
     user = await user_manager.user_db.get_by_email(user_info.email)
-    if not user:
-        # Google users have no local password: store the hash of a random one,
-        # as fastapi-users' own OAuth callback does.
+    if not user or not user.is_verified:
+        # Google wins: the account becomes verified and gets the hash of a random
+        # password. New accounts have no password, and the one of an unverified
+        # account may have been set by whoever registered the email first.
         password = user_manager.password_helper.generate()
-        user = await user_manager.user_db.create({
-            "email": user_info.email,
+        google_fields = {
             "hashed_password": user_manager.password_helper.hash(password),
-            "is_active": True
-        })
+            "is_verified": True,
+        }
+        if user:
+            user = await user_manager.user_db.update(user, google_fields)
+        else:
+            user = await user_manager.user_db.create({
+                "email": user_info.email,
+                "is_active": True,
+                **google_fields
+            })
 
     # Same token as /auth/jwt/login, including the "aud" claim.
     token = await get_jwt_strategy().write_token(user)
 
-    return RedirectResponse(f"{root_prefix}/login?token={token}")
+    # The token goes in the fragment, which browsers never send to the server,
+    # so it stays out of access logs.
+    response = RedirectResponse(f"{root_prefix}/login#token={token}")
+    response.delete_cookie(GOOGLE_STATE_COOKIE, **google_state_cookie_options)
+    return response
     # return {"access_token": token, "token_type": "bearer"}

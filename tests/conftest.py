@@ -22,14 +22,17 @@ JWT_SIGNING_SECRET_KEY = "test-secret-at-least-32-bytes-long"
 [google]
 GOOGLE_CLIENT_ID = "test-client-id"
 GOOGLE_CLIENT_SECRET = "test-client-secret"
-GOOGLE_REDIRECT_URI = "http://testserver/auth/google/callback"
+GOOGLE_REDIRECT_URI = "http://testserver{prefix}/auth/google/callback"
 """
 
 
 @pytest.fixture(params=["", "myapp"], ids=["no-root-path", "root-path"])
 def app_module(request, tmp_path, monkeypatch):
+    root_path = request.param
+    # Like a real deployment, Google redirects back to the prefixed callback URL.
+    prefix = f"/{root_path}" if root_path else ""
     config = tmp_path / "config.toml"
-    config.write_text(CONFIG.format(root_path=request.param))
+    config.write_text(CONFIG.format(root_path=root_path, prefix=prefix))
     monkeypatch.setenv("CONFIG_PATH", str(config))
 
     # The app reads its config and DB URL at import time, so import it fresh

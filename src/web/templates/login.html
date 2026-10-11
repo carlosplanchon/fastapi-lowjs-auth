@@ -109,13 +109,12 @@
 
       /* lifecycle ---------------------------------------------------- */
       init() {
-        // Capture token if it comes from Google (?token=xxx)
-        const url = new URL(window.location.href);
-        const t   = url.searchParams.get("token");
+        // Capture token if it comes from Google (#token=xxx). It travels in the
+        // URL fragment, which is never sent to the server.
+        const t = new URLSearchParams(window.location.hash.slice(1)).get("token");
         if (t) {
           localStorage.setItem("token", t);
-          url.searchParams.delete("token");
-          history.replaceState({}, "", url.pathname);
+          history.replaceState({}, "", window.location.pathname);
         }
 
         const token = localStorage.getItem("token");

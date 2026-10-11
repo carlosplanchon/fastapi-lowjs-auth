@@ -8,6 +8,10 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 3. From the repository root: `bash tmux_start_service.sh`. It starts Postgres and the API (`uv run main_api.py` inside `src/`).
 4. Open `http://127.0.0.1:8000/login` (`http://127.0.0.1:8000/<ROOT_PATH>/login` if `ROOT_PATH` is set).
 
+## Google sign-in
+
+Google only returns verified emails, so signing in with Google marks the account as verified. If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email.
+
 ## Tests
 
 `uv run pytest` (uses SQLite and a simulated Google login, no Postgres needed).

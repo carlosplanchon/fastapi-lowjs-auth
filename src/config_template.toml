@@ -16,6 +16,8 @@ DB_PASSWORD = "..."
 JWT_SIGNING_SECRET_KEY = "..."
 
 [google]
+# GOOGLE_REDIRECT_URI: public URL of /auth/google/callback (including ROOT_PATH),
+# exactly as registered in Google. The OAuth state cookie is scoped to it.
 GOOGLE_CLIENT_ID     = "..."
 GOOGLE_CLIENT_SECRET = "..."
 GOOGLE_REDIRECT_URI  = "..."
