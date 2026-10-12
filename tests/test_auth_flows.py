@@ -75,6 +75,10 @@ def test_login_page_serves_its_css_js_and_images_locally(client, prefix):
         response = client.get(url)
         assert response.status_code == 200
         assert response.headers["content-type"].startswith(("text/css", "text/javascript", "image/svg+xml"))
+        # Browsers must check with the server before reusing them: a cached app.js
+        # could be older than the page.
+        assert response.headers["cache-control"] == "no-cache"
+        assert client.get(url, headers={"If-None-Match": response.headers["etag"]}).status_code == 304
 
 
 def test_password_register_and_login(client, prefix):

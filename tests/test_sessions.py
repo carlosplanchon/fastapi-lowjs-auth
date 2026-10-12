@@ -81,13 +81,31 @@ def test_resetting_the_password_ends_every_session(client, prefix, sent_emails):
     assert client.get(f"{prefix}/me").status_code == 401
 
 
-def test_changing_the_password_ends_every_session(client, prefix):
+def test_changing_the_password_ends_the_other_sessions_and_renews_this_one(client, prefix, app_module):
     register(client, prefix)
     sign_in(client, prefix)
+    other = client.cookies["session"]  # another device
+    client.cookies.clear()
+    sign_in(client, prefix)
+    this = client.cookies["session"]
 
-    response = client.patch(f"{prefix}/users/me", json={"password": "new-long-secret"})
-    assert response.status_code == 200
-    assert client.get(f"{prefix}/me").status_code == 401
+    response = client.post(
+        f"{prefix}/auth/change-password",
+        json={"current_password": "long-secret", "new_password": "new-long-secret"},
+    )
+    assert response.status_code == 204
+    cookie = response.headers["set-cookie"].lower()
+    for attribute in ("httponly", "samesite=lax", "secure", f"path={prefix or '/'}"):
+        assert attribute in cookie
+
+    # This browser carries on with a new session; the old ones are over.
+    new = client.cookies["session"]
+    assert new not in (this, other)
+    assert client.get(f"{prefix}/me").status_code == 200
+    for old in (this, other):
+        assert client.get(f"{prefix}/me", headers={"Cookie": f"session={old}"}).status_code == 401
+    stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
+    assert stored == [hash_token(new)]
 
 
 def test_sessions_expire(client, prefix, app_module):

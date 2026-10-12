@@ -23,6 +23,7 @@ LOGIN_ATTEMPTS_PER_IP = parse(setting("LOGIN_ATTEMPTS_PER_IP", "30/15minutes"))
 EMAILS_PER_ADDRESS = parse(setting("EMAILS_PER_ADDRESS", "3/hour"))
 EMAIL_REQUESTS_PER_IP = parse(setting("EMAIL_REQUESTS_PER_IP", "10/hour"))
 REGISTRATIONS_PER_IP = parse(setting("REGISTRATIONS_PER_IP", "10/hour"))
+PASSWORD_CHANGE_FAILURES_PER_ACCOUNT = parse(setting("PASSWORD_CHANGE_FAILURES_PER_ACCOUNT", "5/15minutes"))
 
 
 def client_ip(request: Request) -> str:
@@ -61,12 +62,27 @@ async def enforce(request: Request) -> None:
         return
 
     for limit, *key in checks:
-        if not await limiter.hit(limit, *key):
-            window = await limiter.get_window_stats(limit, *key)
-            retry_after = max(1, int(window.reset_time - time.time()))
-            raise HTTPException(429, "TOO_MANY_REQUESTS", headers={"Retry-After": str(retry_after)})
+        await consume(limit, *key)
+
+
+async def consume(limit, *key: str) -> None:
+    """Counts one request against the limit, or answers 429 when it's used up."""
+    if not await limiter.hit(limit, *key):
+        window = await limiter.get_window_stats(limit, *key)
+        retry_after = max(1, int(window.reset_time - time.time()))
+        raise HTTPException(429, "TOO_MANY_REQUESTS", headers={"Retry-After": str(retry_after)})
 
 
 async def login_succeeded(request: Request, email: str) -> None:
     # Only consecutive failures count towards the per-account login limit.
     await limiter.clear(LOGIN_FAILURES_PER_ACCOUNT, "login-failures", client_ip(request), normalize(email))
+
+
+async def password_change_attempted(user_id: object) -> None:
+    # Per account, not per IP: only someone signed in to it gets this far, and
+    # switching IPs mustn't buy more guesses at the current password.
+    await consume(PASSWORD_CHANGE_FAILURES_PER_ACCOUNT, "password-change-failures", str(user_id))
+
+
+async def password_change_succeeded(user_id: object) -> None:
+    await limiter.clear(PASSWORD_CHANGE_FAILURES_PER_ACCOUNT, "password-change-failures", str(user_id))

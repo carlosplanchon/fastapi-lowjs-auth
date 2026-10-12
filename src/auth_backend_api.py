@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, Request, Response, BackgroundTasks, status
 from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPasswordException
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users.authentication import AuthenticationBackend
@@ -19,6 +19,7 @@ from fastapi_sso.sso.google import GoogleSSO
 
 from fastapi_users import schemas
 
+from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -205,6 +206,8 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](
 )
 
 current_active_user = fastapi_users.current_user(active=True)
+# The user and the token they signed in with: tells the session cookie from a Bearer JWT.
+current_active_user_and_token = fastapi_users.authenticator.current_user_token(active=True)
 
 # --> GOOGLE SSO:
 google_sso = GoogleSSO(
@@ -238,8 +241,18 @@ app = FastAPI(
     title=APP_ROOT_PATH.capitalize() or "FastAPI LowJS Auth",
 )
 
+class RevalidatedStaticFiles(StaticFiles):
+    # Without Cache-Control, browsers guess from Last-Modified how long a file stays
+    # fresh and reuse it without asking: after a deploy, the new page could run with
+    # an old app.js. no-cache makes them check first (a 304 when nothing changed).
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Compiled Tailwind CSS (build_css.sh) and the pinned Alpine.js build.
-app.mount("/static", StaticFiles(directory=Path(__file__).parent / "web" / "static"), name="static")
+app.mount("/static", RevalidatedStaticFiles(directory=Path(__file__).parent / "web" / "static"), name="static")
 
 # Second layer against CSRF: the session cookie is already SameSite=Lax.
 app.add_middleware(OriginCheckMiddleware, public_url=APP_PUBLIC_URL)
@@ -295,11 +308,17 @@ app.include_router(
     tags=["auth"],
     dependencies=[Depends(rate_limits.enforce)]
 )
-app.include_router(
-    fastapi_users.get_users_router(UserRead, UserUpdate),
-    prefix="/users",
-    tags=["users"]
-)
+# Without PATCH /users/me: it changed the password without asking for the current
+# one, and the email without confirming it (a new email plus "forgot password"
+# hands the account over). Passwords change through /auth/change-password.
+# Removed before include_router, which copies the routes.
+users_router = fastapi_users.get_users_router(UserRead, UserUpdate)
+patch_me = [route for route in users_router.routes if route.name == "users:patch_current_user"]
+if len(patch_me) != 1:
+    # A fastapi-users update renamed it: better not to start than to expose it again.
+    raise RuntimeError("Can't find fastapi-users' PATCH /users/me route to remove it")
+users_router.routes.remove(patch_me[0])
+app.include_router(users_router, prefix="/users", tags=["users"])
 
 
 # --> TEST ROUTE:
@@ -318,6 +337,52 @@ async def login_page(request: Request):
 @app.get("/me")
 async def get_me(user: User = Depends(current_active_user)):
     return {"email": user.email, "id": str(user.id), "is_verified": user.is_verified}
+
+
+# --> PASSWORD CHANGE:
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post(
+    "/auth/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    name="auth:change_password",
+    tags=["auth"],
+)
+async def change_password(
+    request: Request,
+    body: PasswordChange,
+    user_and_token: tuple[User, str] = Depends(current_active_user_and_token),
+    user_manager: UserManager = Depends(get_user_manager),
+    strategy: HashedDatabaseStrategy = Depends(get_database_strategy),
+):
+    user, token = user_and_token
+    # Counted before checking: once blocked, even the right password gets a 429,
+    # so the answer doesn't tell whether a guess was right.
+    await rate_limits.password_change_attempted(user.id)
+    verified, _ = user_manager.password_helper.verify_and_update(body.current_password, user.hashed_password)
+    if not verified:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_PASSWORD_BAD_CREDENTIALS")
+    await rate_limits.password_change_succeeded(user.id)
+
+    try:
+        # on_after_update ends every session of the account, this one included.
+        user = await user_manager.update(UserUpdate(password=body.new_password), user, safe=True, request=request)
+    except InvalidPasswordException as e:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"code": "CHANGE_PASSWORD_INVALID_PASSWORD", "reason": e.reason},
+        )
+
+    if token == request.cookies.get(cookie_transport.cookie_name):
+        # Signed in with the session cookie: this browser carries on with a new
+        # session, written after the update so that it isn't ended too.
+        return await cookie_transport.get_login_response(await strategy.write_token(user))
+    # Signed in with a Bearer JWT: there's no session to renew.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # --> GOOGLE LOGIN:

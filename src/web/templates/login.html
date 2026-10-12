@@ -148,10 +148,52 @@
             </button>
           </template>
 
+          <button @click="show('change-password')"
+                  class="w-full border border-gray-300 rounded py-2 mb-4 hover:bg-gray-50 transition">
+            Change password
+          </button>
+
           <button @click="logout"
                   class="w-full bg-gray-800 text-white py-2 rounded hover:bg-black transition">
             Sign out
           </button>
+        </div>
+      </template>
+
+      <!-- PANEL CHANGE PASSWORD ------------------------------------------- -->
+      <template x-if="view==='change-password'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Change your password</h1>
+
+          <form @submit.prevent="changePassword" class="space-y-4">
+            <!-- For password managers: the account the new password belongs to. -->
+            <input type="email" :value="user.email" readonly hidden
+                   aria-label="Email" autocomplete="username">
+            <input x-model="currentPassword" type="password" placeholder="Current password" required
+                   aria-label="Current password" autocomplete="current-password"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="password" type="password" placeholder="New password" required
+                   minlength="{{ min_password_length }}"
+                   aria-label="New password" autocomplete="new-password"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="password2" type="password" placeholder="Confirm new password" required
+                   aria-label="Confirm new password" autocomplete="new-password"
+                   class="w-full border rounded px-3 py-2">
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+              Save password
+            </button>
+          </form>
+
+          <p class="text-sm text-center mt-4">
+            Don't know your current password (for example, you sign in with Google)?
+            <a href="#" @click.prevent="emailResetLink"
+               class="text-blue-600 hover:underline">Email me a reset link</a>
+          </p>
+          <p class="text-sm text-center mt-2">
+            <a href="#" @click.prevent="show('dashboard')"
+               class="text-blue-600 hover:underline">Back to my account</a>
+          </p>
         </div>
       </template>
 

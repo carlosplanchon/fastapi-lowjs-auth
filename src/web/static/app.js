@@ -7,6 +7,7 @@ const ERROR_MESSAGES = {
   REGISTER_USER_ALREADY_EXISTS: "An account with this email already exists.",
   RESET_PASSWORD_BAD_TOKEN: "This reset link is invalid or has expired. Please request a new one.",
   VERIFY_USER_BAD_TOKEN: "This verification link is invalid or has expired.",
+  CHANGE_PASSWORD_BAD_CREDENTIALS: "Your current password is incorrect.",
   // From the Google callback, which redirects back here with #error=...
   GOOGLE_CANCELLED: "Google sign-in was cancelled.",
   GOOGLE_FAILED: "Google sign-in failed. Please try again.",
@@ -35,8 +36,8 @@ document.addEventListener("alpine:init", () => {
     return {
       /* state ----------------------------------------------------------- */
       view: "login",
-      email: "", password: "", password2: "",
-      error: "", notice: "", user: {}, resetToken: "",
+      email: "", password: "", password2: "", currentPassword: "",
+      error: "", notice: "", user: {}, resetToken: "", busy: false,
 
       /* lifecycle ---------------------------------------------------- */
       async init() {
@@ -87,6 +88,9 @@ document.addEventListener("alpine:init", () => {
       show(view) {
         this.view = view;
         this.error = this.notice = "";
+        // Every form starts with empty password fields: after signing in, the
+        // sign-in password would otherwise show up in the change-password form.
+        this.currentPassword = this.password = this.password2 = "";
       },
 
       /* actions --------------------------------------------------------- */
@@ -191,6 +195,50 @@ document.addEventListener("alpine:init", () => {
         }
       },
 
+      async changePassword() {
+        // A second submit would race the first with the old cookie and could
+        // leave this browser signed out.
+        if (this.busy) return;
+        this.error = this.notice = "";
+        if (this.password !== this.password2) {
+          this.error = "Passwords don't match.";
+          return;
+        }
+        this.busy = true;
+        try {
+          // The server ends the other sessions and sets a new cookie for this one.
+          await this.api("/auth/change-password", {
+            method: "POST",
+            body: JSON.stringify({ current_password: this.currentPassword, new_password: this.password })
+          });
+          this.show("dashboard");
+          this.notice = "Your password has been changed. Other devices have been signed out.";
+        } catch (e) {
+          if (e.status === 401) {
+            this.show("login");
+            this.error = "Your session has ended. Please sign in again.";
+          } else {
+            this.error = errorMessage(e);
+          }
+        } finally {
+          this.busy = false;
+        }
+      },
+
+      async emailResetLink() {
+        // For accounts without a known password, e.g. created by signing in with Google.
+        this.error = this.notice = "";
+        try {
+          await this.api("/auth/forgot-password", {
+            method: "POST",
+            body: JSON.stringify({ email: this.user.email })
+          });
+          this.notice = "We've emailed you a link to choose a new password. Using it signs you out everywhere, here too.";
+        } catch (e) {
+          this.error = errorMessage(e);
+        }
+      },
+
       async logout() {
         try {
           // Ends the session in the database and clears the cookie.
@@ -202,8 +250,8 @@ document.addEventListener("alpine:init", () => {
             return;
           }
         }
-        this.email = this.password = this.password2 = "";
-        this.show("login");
+        this.email = "";
+        this.show("login");  // also clears the password fields
       },
 
       google() {

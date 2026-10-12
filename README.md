@@ -40,8 +40,10 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 ## Sessions
 
 - Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
-- Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting or changing the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
-- API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`. Those can't be revoked, so they last one hour.
+- Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
+- Signed-in users change their password from the account page (`POST /auth/change-password`), which asks for the current one. That ends every other session of the account and gives this browser a new one.
+- There's no `PATCH /users/me`: fastapi-users' version changed the password without the current one, and the email without confirming it, so anyone with a session could take the account over (new email, then "forgot password"). Changing the email isn't supported.
+- API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`. Those can't be revoked, not even by a password reset or change, so they last one hour.
 - State-changing requests that a browser sends from another site are rejected with `403`: their `Origin` must be `PUBLIC_URL` or the host the request went to. This adds to SameSite and also covers sign-in.
 
 ## Google sign-in
@@ -57,7 +59,7 @@ Google only returns verified emails, so signing in with Google marks the account
 
 ## Rate limiting
 
-Sign-in, registration and the routes that send emails are rate limited. Over a limit, the API answers `429` with a `Retry-After` header.
+Sign-in, registration, password changes and the routes that send emails are rate limited. Over a limit, the API answers `429` with a `Retry-After` header.
 
 | Limit | Default |
 |---|---|
@@ -66,6 +68,7 @@ Sign-in, registration and the routes that send emails are rate limited. Over a l
 | Reset and verification emails per address, counted whether the account exists or not | 3 per hour |
 | Reset and verification email requests per IP | 10 per hour |
 | Registrations per IP | 10 per hour |
+| Wrong current passwords in a row when changing it, per account (a successful change resets it) | 5 per 15 minutes |
 
 - Change them in the optional `[rate_limits]` section of `config.toml` (see `config_template.toml`).
 - Counters live in memory, per process. With several workers, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.
@@ -88,7 +91,7 @@ HTML pages also get a strict Content Security Policy (`src/security_headers.py`)
 
 ## Frontend assets
 
-No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`.
+No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`. They're served with `Cache-Control: no-cache`, so browsers check with the server before reusing them (a `304` when nothing changed): after a deploy, the new page never runs with an old `app.js`.
 
 - CSS: Tailwind v4, compiled from `src/web/tailwind.css`. After changing classes in the templates, run `bash build_css.sh` and commit `src/web/static/app.css`. The script downloads the Tailwind standalone CLI to `.tools/` on first use (no Node.js needed) and checks it against a pinned checksum.
 - JS: the page's logic is in `app.js`, as an Alpine component (`Alpine.data("authApp", ...)`).

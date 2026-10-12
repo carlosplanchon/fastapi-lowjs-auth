@@ -13,6 +13,14 @@ def ask_for_email(client, prefix, path="forgot-password", email="ana@example.com
     return client.post(f"{prefix}/auth/{path}", json={"email": email})
 
 
+def change_password(client, prefix, token, current="long-secret", new="new-long-secret"):
+    return client.post(
+        f"{prefix}/auth/change-password",
+        json={"current_password": current, "new_password": new},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
 def assert_too_many(response):
     assert response.status_code == 429
     assert response.json()["detail"] == "TOO_MANY_REQUESTS"
@@ -60,6 +68,27 @@ def test_a_successful_login_resets_the_failure_count(client, prefix):
     for _ in range(4):
         assert sign_in(client, prefix, password="wrong-password").status_code == 400
     assert sign_in(client, prefix).status_code == 200
+
+
+def test_password_change_blocks_after_five_wrong_current_passwords(client, prefix):
+    assert register(client, prefix).status_code == 201
+    token = sign_in(client, prefix).json()["access_token"]
+    for _ in range(5):
+        assert change_password(client, prefix, token, current="wrong-password").status_code == 400
+    # Blocked even with the right one, so guessing gets nowhere.
+    assert_too_many(change_password(client, prefix, token))
+    assert sign_in(client, prefix).status_code == 200
+
+
+def test_a_successful_password_change_resets_the_failure_count(client, prefix):
+    assert register(client, prefix).status_code == 201
+    token = sign_in(client, prefix).json()["access_token"]
+    for _ in range(4):
+        assert change_password(client, prefix, token, current="wrong-password").status_code == 400
+    assert change_password(client, prefix, token).status_code == 204
+    for _ in range(4):
+        assert change_password(client, prefix, token, current="wrong-password").status_code == 400
+    assert change_password(client, prefix, token, current="new-long-secret", new="newer-long-secret").status_code == 204
 
 
 def test_login_attempts_are_limited_per_ip_across_accounts(make_app):

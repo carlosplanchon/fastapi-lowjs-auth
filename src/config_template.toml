@@ -50,3 +50,6 @@ LOGIN_ATTEMPTS_PER_IP = "30/15minutes"
 EMAILS_PER_ADDRESS = "3/hour"
 EMAIL_REQUESTS_PER_IP = "10/hour"
 REGISTRATIONS_PER_IP = "10/hour"
+# Wrong current passwords in a row when changing it, per account (a successful
+# change resets it).
+PASSWORD_CHANGE_FAILURES_PER_ACCOUNT = "5/15minutes"
