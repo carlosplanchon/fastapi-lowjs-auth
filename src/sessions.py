@@ -2,9 +2,13 @@
 
 import base64
 import hashlib
+import hmac
 import secrets
 
+import jwt
+from fastapi_users.authentication import JWTStrategy
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
+from fastapi_users.jwt import decode_jwt, generate_jwt
 
 
 # How long a browser session lasts after signing in. Signing out, resetting or
@@ -35,3 +39,36 @@ class HashedDatabaseStrategy(DatabaseStrategy):
 
     async def destroy_token(self, token: str, user) -> None:
         await super().destroy_token(hash_token(token), user)
+
+
+class PasswordBoundJWTStrategy(JWTStrategy):
+    """fastapi-users' JWTStrategy, with JWTs that stop working when the password changes.
+
+    A JWT can't be revoked, but it can carry a fingerprint of the password hash:
+    after a change, a reset or Google taking over an unverified account, it no
+    longer matches and the token is refused.
+    """
+
+    def fingerprint(self, user) -> str:
+        # Keyed with the signing secret, so the token reveals nothing about the hash.
+        # A plain HMAC, cheap enough to check on every request.
+        digest = hmac.new(self.secret.encode(), b"password:" + user.hashed_password.encode(), hashlib.sha256)
+        return base64.urlsafe_b64encode(digest.digest()[:16]).rstrip(b"=").decode()
+
+    async def write_token(self, user) -> str:
+        data = {"sub": str(user.id), "aud": self.token_audience, "pwd": self.fingerprint(user)}
+        return generate_jwt(data, self.encode_key, self.lifetime_seconds, algorithm=self.algorithm)
+
+    async def read_token(self, token, user_manager):
+        user = await super().read_token(token, user_manager)
+        if user is None:
+            return None
+        try:
+            # Already checked by super(); read again for the fingerprint.
+            claims = decode_jwt(token, self.decode_key, self.token_audience, algorithms=[self.algorithm])
+        except jwt.PyJWTError:  # it expired in between
+            return None
+        # Tokens from before the password changed, or without a fingerprint at all.
+        if not secrets.compare_digest(str(claims.get("pwd", "")), self.fingerprint(user)):
+            return None
+        return user

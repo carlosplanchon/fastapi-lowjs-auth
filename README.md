@@ -44,7 +44,9 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 - Signed-in users change their password from the account page (`POST /auth/change-password`), which asks for the current one. That ends every other session of the account and gives this browser a new one.
 - The account page can also sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
 - There's no `PATCH /users/me`: fastapi-users' version changed the password without the current one, and the email without confirming it, so anyone with a session could take the account over (new email, then "forgot password"). Changing the email isn't supported.
-- API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`. Those can't be revoked, not even by a password reset or change, so they last one hour.
+- API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`.
+  - They carry a fingerprint of the password, so they stop working as soon as it changes: a change, a reset, or Google taking over an unverified account. The client then signs in again.
+  - They can't be revoked any other way (signing out doesn't end them), so they last one hour.
 - State-changing requests that a browser sends from another site are rejected with `403`: their `Origin` must be `PUBLIC_URL` or the host the request went to. This adds to SameSite and also covers sign-in.
 
 ## Google sign-in

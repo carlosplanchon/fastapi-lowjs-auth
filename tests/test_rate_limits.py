@@ -86,6 +86,8 @@ def test_a_successful_password_change_resets_the_failure_count(client, prefix):
     for _ in range(4):
         assert change_password(client, prefix, token, current="wrong-password").status_code == 400
     assert change_password(client, prefix, token).status_code == 204
+    # The change ended that token: sign in again with the new password.
+    token = sign_in(client, prefix, password="new-long-secret").json()["access_token"]
     for _ in range(4):
         assert change_password(client, prefix, token, current="wrong-password").status_code == 400
     assert change_password(client, prefix, token, current="new-long-secret", new="newer-long-secret").status_code == 204

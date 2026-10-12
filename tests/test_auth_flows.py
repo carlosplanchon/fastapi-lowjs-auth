@@ -145,6 +145,10 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
         json={"email": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 201
+    squatter_token = client.post(
+        f"{prefix}/auth/jwt/login",
+        data={"username": "ana@gmail.com", "password": "long-secret"},
+    ).json()["access_token"]
 
     fake_google_account(monkeypatch, app_module, "ana@gmail.com")
     google_login(client, prefix)
@@ -152,12 +156,15 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
     assert response.status_code == 200
     assert response.json()["is_verified"] is True
 
-    # Google wins: the password set before no longer works.
+    # Google wins: the password set before no longer works...
     response = client.post(
         f"{prefix}/auth/jwt/login",
         data={"username": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 400
+    # ...and neither do the tokens it got (only the token: no session cookie).
+    response = client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {squatter_token}", "Cookie": ""})
+    assert response.status_code == 401
 
 
 def test_google_login_keeps_the_password_of_a_verified_account(

@@ -13,7 +13,6 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users.authentication import AuthenticationBackend
 from fastapi_users.authentication import BearerTransport
 from fastapi_users.authentication import CookieTransport
-from fastapi_users.authentication import JWTStrategy
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 from fastapi_sso.sso.google import GoogleSSO
 
@@ -36,7 +35,7 @@ import rate_limits
 from models import AccessToken, User
 from origin_check import OriginCheckMiddleware
 from security_headers import SecurityHeadersMiddleware
-from sessions import SESSION_LIFETIME_SECONDS, HashedDatabaseStrategy
+from sessions import SESSION_LIFETIME_SECONDS, HashedDatabaseStrategy, PasswordBoundJWTStrategy
 
 from shared import DB_URL
 
@@ -166,7 +165,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         )
 
     async def end_all_sessions(self, user: User) -> None:
-        # Browser sessions only: Bearer JWTs can't be revoked and expire on their own.
+        # Browser sessions only. Bearer JWTs stop working by themselves when the
+        # password changes (PasswordBoundJWTStrategy), and otherwise expire within the hour.
         await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
         await self.user_db.session.commit()
 
@@ -202,14 +202,15 @@ cookie_backend = AuthenticationBackend(
     get_strategy=get_database_strategy
 )
 
-# API clients (scripts, mobile apps, Swagger's "Authorize"): Bearer JWTs. They
-# can't be revoked, so they're short-lived.
+# API clients (scripts, mobile apps, Swagger's "Authorize"): Bearer JWTs. They stop
+# working when the password changes, but can't be revoked otherwise (signing out
+# doesn't end them), so they're short-lived.
 # Relative, so Swagger's "Authorize" also works when served under ROOT_PATH.
 bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
 
 
-def get_jwt_strategy() -> JWTStrategy:
-    return JWTStrategy(secret=JWT_SIGNING_SECRET_KEY, lifetime_seconds=3600)
+def get_jwt_strategy() -> PasswordBoundJWTStrategy:
+    return PasswordBoundJWTStrategy(secret=JWT_SIGNING_SECRET_KEY, lifetime_seconds=3600)
 
 
 jwt_backend = AuthenticationBackend(

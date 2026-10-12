@@ -74,12 +74,14 @@ def test_api_clients_change_it_with_their_bearer_token(client, prefix):
     browser_cookie = client.cookies["session"]
     client.cookies.clear()
 
-    response = change_password(client, prefix, headers={"Authorization": f"Bearer {bearer_token(client, prefix)}"})
+    token = bearer_token(client, prefix)
+    response = change_password(client, prefix, headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 204
     # No browser session for an API client...
     assert "set-cookie" not in response.headers
-    # ...and the browser's one ended with the change.
+    # ...the browser's one ended with the change, and so did the token itself.
     assert client.get(f"{prefix}/me", headers={"Cookie": f"session={browser_cookie}"}).status_code == 401
+    assert client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
 def test_a_dead_session_cookie_does_not_get_renewed(client, prefix):

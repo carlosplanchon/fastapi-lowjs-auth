@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timedelta, timezone
 
+from fastapi_users.jwt import generate_jwt
 from sqlalchemy import select, update
 
 from models import AccessToken
@@ -18,6 +19,16 @@ def sign_in(client, prefix, password="long-secret", **kwargs):
         data={"username": "ana@example.com", "password": password},
         **kwargs,
     )
+
+
+def bearer_token(client, prefix, password="long-secret"):
+    response = client.post(f"{prefix}/auth/jwt/login", data={"username": "ana@example.com", "password": password})
+    return response.json()["access_token"]
+
+
+def me_with_bearer(client, prefix, token):
+    # Only the token: no session cookie that could sign the request in instead.
+    return client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {token}", "Cookie": ""})
 
 
 def run_in_app(client, app_module, statement):
@@ -158,6 +169,37 @@ def test_api_clients_can_sign_out_every_browser(client, prefix):
     assert response.status_code == 204
     assert "set-cookie" not in response.headers
     assert client.get(f"{prefix}/me", headers={"Cookie": f"session={browser_cookie}"}).status_code == 401
+    # The password didn't change, so the token still works.
+    assert me_with_bearer(client, prefix, token).status_code == 200
+
+
+def test_bearer_tokens_stop_working_when_the_password_changes(client, prefix, sent_emails):
+    register(client, prefix)
+    before_change = bearer_token(client, prefix)
+    sign_in(client, prefix)
+    response = client.post(
+        f"{prefix}/auth/change-password",
+        json={"current_password": "long-secret", "new_password": "new-long-secret"},
+    )
+    assert response.status_code == 204
+    assert me_with_bearer(client, prefix, before_change).status_code == 401
+
+    # A reset ends them too.
+    before_reset = bearer_token(client, prefix, "new-long-secret")
+    assert me_with_bearer(client, prefix, before_reset).status_code == 200
+    client.post(f"{prefix}/auth/forgot-password", json={"email": "ana@example.com"})
+    token = re.search(r"#reset_token=(\S+)", sent_emails[-1][2]).group(1)
+    client.post(f"{prefix}/auth/reset-password", json={"token": token, "password": "newer-long-secret"})
+    assert me_with_bearer(client, prefix, before_reset).status_code == 401
+    assert me_with_bearer(client, prefix, bearer_token(client, prefix, "newer-long-secret")).status_code == 200
+
+
+def test_bearer_tokens_without_the_password_fingerprint_are_refused(client, prefix, app_module):
+    # Like the ones issued before tokens carried it: correctly signed, but refused.
+    register(client, prefix)
+    user_id = me_with_bearer(client, prefix, bearer_token(client, prefix)).json()["id"]
+    token = generate_jwt({"sub": user_id, "aud": ["fastapi-users:auth"]}, app_module.JWT_SIGNING_SECRET_KEY, 3600)
+    assert me_with_bearer(client, prefix, token).status_code == 401
 
 
 def test_sessions_expire(client, prefix, app_module):
