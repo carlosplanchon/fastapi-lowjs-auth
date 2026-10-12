@@ -69,7 +69,7 @@ def test_login_page_serves_its_css_js_and_images_locally(client, prefix):
     html = client.get(f"{prefix}/login").text
     # Nothing from other sites (the CSP would block it): everything comes from /static.
     urls = re.findall(r'<(?:link|script|img)[^>]* (?:href|src)="([^"]+)"', html)
-    assert len(urls) == 4  # the stylesheet, app.js, Alpine and the Google logo
+    assert len(urls) == 5  # the stylesheet, the icon, app.js, Alpine and the Google logo
     for url in urls:
         assert url.startswith(f"{str(client.base_url).rstrip('/')}{prefix}/static/")
         response = client.get(url)

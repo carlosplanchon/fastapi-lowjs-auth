@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A padlock in the buttons' blue (Tailwind's blue-600). -->
+  <path d="M10 14v-4a6 6 0 0 1 12 0v4" fill="none" stroke="#155dfc" stroke-width="3" stroke-linecap="round"/>
+  <rect x="5" y="14" width="22" height="16" rx="3" fill="#155dfc"/>
+  <circle cx="16" cy="21" r="2.5" fill="#fff"/>
+  <rect x="15" y="22" width="2" height="4" rx="1" fill="#fff"/>
+</svg>

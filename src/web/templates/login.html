@@ -7,6 +7,8 @@
 
   <!-- Tailwind compilado con build_css.sh -->
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <!-- Without it, browsers ask for /favicon.ico, at the domain's root even under ROOT_PATH -->
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}">
   <!-- La lógica de la página, antes que Alpine (los dos con defer, se ejecutan en orden) -->
   <script defer src="{{ url_for('static', path='app.js') }}"></script>
   <!-- Alpine.js servido localmente, versión fija; la build CSP no necesita 'unsafe-eval' -->

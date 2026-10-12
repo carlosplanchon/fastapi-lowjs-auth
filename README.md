@@ -112,6 +112,7 @@ HTML pages also get a strict Content Security Policy (`src/security_headers.py`)
 No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`. They're served with `Cache-Control: no-cache`, so browsers check with the server before reusing them (a `304` when nothing changed): after a deploy, the new page never runs with an old `app.js`.
 
 - CSS: Tailwind v4, compiled from `src/web/tailwind.css`. After changing classes in the templates, run `bash build_css.sh` and commit `src/web/static/app.css`. The script downloads the Tailwind standalone CLI to `.tools/` on first use (no Node.js needed) and checks it against a pinned checksum.
+- Icon: `favicon.svg`, declared in `login.html`. Otherwise browsers ask for `/favicon.ico` at the domain's root, outside `ROOT_PATH`.
 - JS: the page's logic is in `app.js`, as an Alpine component (`Alpine.data("authApp", ...)`).
 - Alpine.js: `alpine-csp-3.17.4.min.js`, the CSP build (`dist/cdn.min.js` from the `@alpinejs/csp` npm package), so the CSP doesn't need `'unsafe-eval'`. Its expressions are simpler than the regular build's (no arrow functions, template literals or globals like `window`): keep the attributes short and the logic in `app.js`. To update it, replace the file and its reference in `login.html`.
 
