@@ -1,6 +1,7 @@
 import re
 from datetime import UTC, datetime, timedelta
 
+from fastapi.testclient import TestClient
 from fastapi_users.jwt import generate_jwt
 from sqlalchemy import select, update
 
@@ -200,6 +201,44 @@ def test_bearer_tokens_without_the_password_fingerprint_are_refused(client, pref
     user_id = me_with_bearer(client, prefix, bearer_token(client, prefix)).json()["id"]
     token = generate_jwt({"sub": user_id, "aud": ["fastapi-users:auth"]}, app_module.JWT_SIGNING_SECRET_KEY, 3600)
     assert me_with_bearer(client, prefix, token).status_code == 401
+
+
+def test_signing_in_deletes_that_users_expired_sessions(client, prefix, app_module):
+    register(client, prefix)
+    register(client, prefix, email="bob@example.com")
+    sign_in(client, prefix)
+    client.cookies.clear()
+    client.post(f"{prefix}/auth/cookie/login", data={"username": "bob@example.com", "password": "long-secret"})
+    bob = client.cookies["session"]
+    client.cookies.clear()
+    too_old = datetime.now(UTC) - timedelta(seconds=SESSION_LIFETIME_SECONDS + 60)
+    run_in_app(client, app_module, update(AccessToken).values(created_at=too_old))
+
+    sign_in(client, prefix)
+    # Ana's expired session is gone; Bob's waits for Bob, or for the next start.
+    stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
+    assert set(stored) == {hash_token(client.cookies["session"]), hash_token(bob)}
+
+
+def test_starting_the_app_deletes_every_expired_session(make_app):
+    app_module = make_app()
+    with TestClient(app_module.app, base_url="https://testserver") as client:
+        register(client, "")
+        sign_in(client, "")
+        expired = client.cookies["session"]
+        client.cookies.clear()
+        sign_in(client, "")
+        current = client.cookies["session"]
+        too_old = datetime.now(UTC) - timedelta(seconds=SESSION_LIFETIME_SECONDS + 60)
+        run_in_app(
+            client, app_module,
+            update(AccessToken).where(AccessToken.token == hash_token(expired)).values(created_at=too_old),
+        )
+
+    # The next start (a deploy, say) deletes the expired one and keeps the other.
+    with TestClient(app_module.app, base_url="https://testserver") as client:
+        stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
+    assert stored == [hash_token(current)]
 
 
 def test_sessions_expire(client, prefix, app_module):

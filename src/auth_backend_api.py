@@ -53,6 +53,7 @@ from sessions import (
     HashedDatabaseStrategy,
     PasswordBoundJWTStrategy,
     password_fingerprint,
+    session_expiry_cutoff,
 )
 from shared import (
     APP_PUBLIC_URL,
@@ -376,8 +377,17 @@ google_state_cookie_options = {
 # --> APP SETUP:
 # app = FastAPI()
 
+async def delete_expired_sessions() -> None:
+    """Every expired session, whoever's: sign-ins only sweep their own user's."""
+    async with async_session_maker() as session:
+        await session.execute(delete(AccessToken).where(AccessToken.created_at < session_expiry_cutoff()))
+        await session.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # On every start, and so on every deploy: catches the users who never sign in again.
+    await delete_expired_sessions()
     yield
     await engine.dispose()
 

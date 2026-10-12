@@ -2,15 +2,22 @@ import base64
 import hashlib
 import hmac
 import secrets
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi_users.authentication import JWTStrategy
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
 from fastapi_users.jwt import decode_jwt, generate_jwt
+from sqlalchemy import delete
 
 # How long a browser session lasts after signing in. Signing out, resetting or
 # changing the password end it earlier.
 SESSION_LIFETIME_SECONDS = 14 * 24 * 3600
+
+
+def session_expiry_cutoff(lifetime_seconds: int = SESSION_LIFETIME_SECONDS) -> datetime:
+    """Sessions created before this have expired: fastapi-users reads with the same cutoff."""
+    return datetime.now(UTC) - timedelta(seconds=lifetime_seconds)
 
 
 def hash_token(token: str) -> str:
@@ -30,6 +37,16 @@ class HashedDatabaseStrategy(DatabaseStrategy):
         return await super().read_token(hash_token(token) if token else None, user_manager)
 
     async def write_token(self, user) -> str:
+        # Expired sessions are ignored, but nothing else deletes them: each sign-in
+        # also sweeps away the user's own. database.create() commits both.
+        if self.lifetime_seconds:
+            table = self.database.access_token_table
+            await self.database.session.execute(
+                delete(table).where(
+                    table.user_id == user.id,
+                    table.created_at < session_expiry_cutoff(self.lifetime_seconds),
+                )
+            )
         token = secrets.token_urlsafe()
         await self.database.create({"token": hash_token(token), "user_id": user.id})
         return token

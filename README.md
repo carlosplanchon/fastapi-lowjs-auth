@@ -40,7 +40,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 ## Sessions
 
 - Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
-- Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
+- Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`). Expired sessions are deleted too: a user's own when they sign in again, and all of them every time the app starts.
 - Signed-in users change their password from the account page (`POST /auth/change-password`), which asks for the current one. That ends every other session of the account and gives this browser a new one.
 - The account page can also sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
 - Users can delete their account from the account page (`POST /auth/delete-account`), which asks for their password. Accounts created with Google set one first with the reset link.
