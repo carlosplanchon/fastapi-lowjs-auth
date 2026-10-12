@@ -214,14 +214,35 @@ document.addEventListener("alpine:init", () => {
           this.show("dashboard");
           this.notice = "Your password has been changed. Other devices have been signed out.";
         } catch (e) {
-          if (e.status === 401) {
-            this.show("login");
-            this.error = "Your session has ended. Please sign in again.";
-          } else {
-            this.error = errorMessage(e);
-          }
+          this.sessionActionFailed(e);
         } finally {
           this.busy = false;
+        }
+      },
+
+      async logoutOthers() {
+        // Like changePassword: a second click would race the first with the old cookie.
+        if (this.busy) return;
+        this.error = this.notice = "";
+        this.busy = true;
+        try {
+          // The server ends every session, this one too, and sets a new cookie here.
+          await this.api("/auth/cookie/logout-others", { method: "POST" });
+          this.notice = "Other devices have been signed out.";
+        } catch (e) {
+          this.sessionActionFailed(e);
+        } finally {
+          this.busy = false;
+        }
+      },
+
+      sessionActionFailed(e) {
+        // The session may have ended meanwhile, e.g. signed out from another device.
+        if (e.status === 401) {
+          this.show("login");
+          this.error = "Your session has ended. Please sign in again.";
+        } else {
+          this.error = errorMessage(e);
         }
       },
 

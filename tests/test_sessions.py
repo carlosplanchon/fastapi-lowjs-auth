@@ -108,6 +108,58 @@ def test_changing_the_password_ends_the_other_sessions_and_renews_this_one(clien
     assert stored == [hash_token(new)]
 
 
+def test_signing_out_other_devices_ends_them_and_renews_this_session(client, prefix, app_module):
+    register(client, prefix)
+    sign_in(client, prefix)
+    other = client.cookies["session"]  # another device
+    client.cookies.clear()
+    sign_in(client, prefix)
+    this = client.cookies["session"]
+
+    response = client.post(f"{prefix}/auth/cookie/logout-others")
+    assert response.status_code == 204
+    assert "httponly" in response.headers["set-cookie"].lower()
+
+    new = client.cookies["session"]
+    assert new not in (this, other)
+    assert client.get(f"{prefix}/me").status_code == 200
+    # The other device is out, and so is any copy of this browser's old cookie.
+    for old in (this, other):
+        assert client.get(f"{prefix}/me", headers={"Cookie": f"session={old}"}).status_code == 401
+    stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
+    assert stored == [hash_token(new)]
+    # The password stays the same.
+    client.cookies.clear()
+    assert sign_in(client, prefix).status_code == 204
+
+
+def test_signing_out_other_devices_needs_a_session_from_this_site(client, prefix):
+    assert client.post(f"{prefix}/auth/cookie/logout-others").status_code == 401
+
+    register(client, prefix)
+    sign_in(client, prefix)
+    response = client.post(f"{prefix}/auth/cookie/logout-others", headers={"Origin": "https://evil.example"})
+    assert response.status_code == 403
+    assert client.get(f"{prefix}/me").status_code == 200
+
+
+def test_api_clients_can_sign_out_every_browser(client, prefix):
+    register(client, prefix)
+    sign_in(client, prefix)
+    browser_cookie = client.cookies["session"]
+    client.cookies.clear()
+    response = client.post(
+        f"{prefix}/auth/jwt/login",
+        data={"username": "ana@example.com", "password": "long-secret"},
+    )
+    token = response.json()["access_token"]
+
+    response = client.post(f"{prefix}/auth/cookie/logout-others", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 204
+    assert "set-cookie" not in response.headers
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={browser_cookie}"}).status_code == 401
+
+
 def test_sessions_expire(client, prefix, app_module):
     register(client, prefix)
     sign_in(client, prefix)

@@ -358,6 +358,37 @@ async def get_me(user: User = Depends(current_active_user)):
     return {"email": user.email, "id": str(user.id), "is_verified": user.is_verified}
 
 
+# --> SESSIONS:
+async def renew_this_session(request: Request, token: str, user: User, strategy: HashedDatabaseStrategy) -> Response:
+    """For after ending every session of the account: this browser carries on."""
+    if token == request.cookies.get(cookie_transport.cookie_name):
+        # Signed in with the session cookie: a new session, so that a copy of the
+        # old cookie doesn't keep working.
+        return await cookie_transport.get_login_response(await strategy.write_token(user))
+    # Signed in with a Bearer JWT: there's no session to renew.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post(
+    "/auth/cookie/logout-others",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    name="auth:cookie.logout_others",
+    tags=["auth"],
+)
+async def logout_other_devices(
+    request: Request,
+    user_and_token: tuple[User, str] = Depends(current_active_user_and_token),
+    user_manager: UserManager = Depends(get_user_manager),
+    strategy: HashedDatabaseStrategy = Depends(get_database_strategy),
+):
+    # Every session ends, this one too, in case someone has a copy of this
+    # browser's cookie. Then this browser gets a new one.
+    user, token = user_and_token
+    await user_manager.end_all_sessions(user)
+    return await renew_this_session(request, token, user, strategy)
+
+
 # --> PASSWORD CHANGE:
 class PasswordChange(BaseModel):
     current_password: str
@@ -396,12 +427,8 @@ async def change_password(
             {"code": "CHANGE_PASSWORD_INVALID_PASSWORD", "reason": e.reason},
         )
 
-    if token == request.cookies.get(cookie_transport.cookie_name):
-        # Signed in with the session cookie: this browser carries on with a new
-        # session, written after the update so that it isn't ended too.
-        return await cookie_transport.get_login_response(await strategy.write_token(user))
-    # Signed in with a Bearer JWT: there's no session to renew.
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # After the update, so that the new session isn't ended too.
+    return await renew_this_session(request, token, user, strategy)
 
 
 # --> GOOGLE LOGIN:
