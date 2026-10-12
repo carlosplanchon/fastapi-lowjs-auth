@@ -14,7 +14,7 @@ ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"
 CONFIG = """
 [app]
 ROOT_PATH = "{root_path}"
-PUBLIC_URL = "https://auth.example"
+PUBLIC_URL = "{public_url}"
 
 [database]
 DB_HOST = "db.example"
@@ -41,11 +41,14 @@ FROM_ADDRESS = "no-reply@auth.example"
 def load_shared(tmp_path, monkeypatch):
     """Return a function that writes a config.toml and imports shared fresh from it."""
 
-    def load(root_path="", db_password="unused", extra_config=""):
+    def load(root_path="", db_password="unused", public_url="https://auth.example", extra_config=""):
         # Like a real deployment, Google redirects back to the prefixed callback URL.
         prefix = f"/{root_path}" if root_path else ""
         config = tmp_path / "config.toml"
-        config.write_text(CONFIG.format(root_path=root_path, prefix=prefix, db_password=db_password) + extra_config)
+        config.write_text(
+            CONFIG.format(root_path=root_path, prefix=prefix, db_password=db_password, public_url=public_url)
+            + extra_config
+        )
         monkeypatch.setenv("CONFIG_PATH", str(config))
 
         # The app reads its config at import time (and keeps rate limit counters

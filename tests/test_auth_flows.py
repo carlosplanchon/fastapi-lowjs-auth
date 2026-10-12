@@ -65,16 +65,16 @@ def test_login_page_inputs_work_with_screen_readers_and_password_managers(client
         assert "autocomplete=" in tag
 
 
-def test_login_page_serves_its_css_and_js_locally(client, prefix):
+def test_login_page_serves_its_css_js_and_images_locally(client, prefix):
     html = client.get(f"{prefix}/login").text
-    # No development CDNs: every stylesheet and script comes from /static.
-    urls = re.findall(r'<(?:link|script)[^>]* (?:href|src)="([^"]+)"', html)
-    assert urls
+    # Nothing from other sites (the CSP would block it): everything comes from /static.
+    urls = re.findall(r'<(?:link|script|img)[^>]* (?:href|src)="([^"]+)"', html)
+    assert len(urls) == 4  # the stylesheet, app.js, Alpine and the Google logo
     for url in urls:
         assert url.startswith(f"{str(client.base_url).rstrip('/')}{prefix}/static/")
         response = client.get(url)
         assert response.status_code == 200
-        assert response.headers["content-type"].startswith(("text/css", "text/javascript"))
+        assert response.headers["content-type"].startswith(("text/css", "text/javascript", "image/svg+xml"))
 
 
 def test_password_register_and_login(client, prefix):

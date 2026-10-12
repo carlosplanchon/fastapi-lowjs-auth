@@ -52,12 +52,28 @@ Sign-in, registration and the routes that send emails are rate limited. Over a l
 - Counters live in memory, per process. With several workers, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.
 - Behind a reverse proxy, uvicorn must trust it to see the real client IPs. By default it trusts `127.0.0.1` and `::1`; for a proxy elsewhere, set `FORWARDED_ALLOW_IPS` to its address. Don't trust every address if the app can be reached directly: clients could fake their IP with `X-Forwarded-For`.
 
+## Security headers
+
+Every response carries:
+
+- `X-Content-Type-Options: nosniff`: browsers use the declared content type instead of guessing one.
+- `X-Frame-Options: DENY`: other sites can't show the app inside a frame (clickjacking).
+- `Referrer-Policy: same-origin`: other sites don't see the app's URLs. (`no-referrer` would make browsers send `Origin: null` with the app's own form posts, which the Origin check rejects.)
+- `Strict-Transport-Security: max-age=31536000`, only when `PUBLIC_URL` is https: for a year, browsers reach this host only over https. They remember it even if you go back to http, so use an https `PUBLIC_URL` only once the host is on https to stay.
+
+HTML pages also get a strict Content Security Policy (`src/security_headers.py`): scripts, styles, images, requests and form posts only from the app itself, nothing inline, no `eval`, and no framing (`frame-ancestors 'none'`). In practice:
+
+- No `<script>` blocks, `style="..."` attributes or `onclick="..."` handlers in the templates: put the code in `src/web/static/`. The tests check it.
+- To load something from another site (fonts, analytics), add it to `CONTENT_SECURITY_POLICY`.
+- FastAPI's `/docs` and `/redoc` load Swagger UI and ReDoc from a CDN with inline scripts, so they don't get the CSP.
+
 ## Frontend assets
 
-No CDNs at runtime: the page loads its CSS and JS from `src/web/static/`.
+No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`.
 
 - CSS: Tailwind v4, compiled from `src/web/tailwind.css`. After changing classes in the templates, run `bash build_css.sh` and commit `src/web/static/app.css`. The script downloads the Tailwind standalone CLI to `.tools/` on first use (no Node.js needed) and checks it against a pinned checksum.
-- Alpine.js: `alpine-3.17.4.min.js`, copied from the npm package. To update it, replace the file and its reference in `login.html`.
+- JS: the page's logic is in `app.js`, as an Alpine component (`Alpine.data("authApp", ...)`).
+- Alpine.js: `alpine-csp-3.17.4.min.js`, the CSP build (`dist/cdn.min.js` from the `@alpinejs/csp` npm package), so the CSP doesn't need `'unsafe-eval'`. Its expressions are simpler than the regular build's (no arrow functions, template literals or globals like `window`): keep the attributes short and the logic in `app.js`. To update it, replace the file and its reference in `login.html`.
 
 ## Tests
 

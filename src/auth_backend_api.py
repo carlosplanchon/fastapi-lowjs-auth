@@ -34,6 +34,7 @@ import mailer
 import rate_limits
 from models import AccessToken, User
 from origin_check import OriginCheckMiddleware
+from security_headers import SecurityHeadersMiddleware
 from sessions import SESSION_LIFETIME_SECONDS, HashedDatabaseStrategy
 
 from shared import DB_URL
@@ -242,6 +243,8 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "web" / "stat
 
 # Second layer against CSRF: the session cookie is already SameSite=Lax.
 app.add_middleware(OriginCheckMiddleware, public_url=APP_PUBLIC_URL)
+# Added last, so it wraps everything: even the responses above get the headers.
+app.add_middleware(SecurityHeadersMiddleware, https=APP_PUBLIC_URL.startswith("https://"))
 
 
 # --> RUTAS JWT (email/pass):
