@@ -3,14 +3,30 @@
 
 FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + fastapi-sso / HTML + TailwindCSS + AlpineJS
 
+## What's included
+
+- Sign-up and sign-in with email and password, or with Google.
+- Email verification, password reset, and notices when the password changes or the account is deleted.
+- An account page:
+  - change the password;
+  - change the email, approved from the current address and confirmed from the new one;
+  - sign out of other devices;
+  - delete the account.
+- Revocable sessions in HttpOnly cookies, plus short-lived Bearer JWTs for API clients.
+- Protection against cross-site requests, rate limiting, security headers and a strict Content Security Policy.
+- A frontend with no JavaScript build: Jinja templates, Alpine.js (its CSP build) and Tailwind, with no CDNs.
+- Alembic migrations, a Dockerfile with a Docker Compose template, and CI with tests, lint, an image check and Dependabot.
+
 ## Quick start
+
+You need [uv](https://docs.astral.sh/uv/), Docker with Compose, and tmux.
 
 1. `cp src/config_template.toml src/config.toml` and fill it in.
 2. `cp src/web/db/docker-compose_template.yaml src/web/db/docker-compose.yml` and set the same Postgres credentials. `DB_PORT` in `config.toml` must match the published port.
 3. From the repository root: `bash tmux_start_service.sh`. It starts Postgres, runs the database migrations (`uv run alembic upgrade head`) and starts the API (`uv run src/main_api.py`).
 4. Open `http://127.0.0.1:8000/login` (`http://127.0.0.1:8000/<ROOT_PATH>/login` if `ROOT_PATH` is set).
 
-To run it all in Docker instead, see [Docker](#docker).
+To run it all in Docker instead, see [Docker](#docker). Signing in with Google also needs an OAuth client, see [Google sign-in](#google-sign-in).
 
 ## Docker
 
@@ -40,34 +56,45 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 ## Sessions
 
 - Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
-- Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`). Expired sessions are deleted too: a user's own when they sign in again, and all of them every time the app starts.
-- Signed-in users change their password from the account page (`POST /auth/change-password`), which asks for the current one. That ends every other session of the account and gives this browser a new one.
-- The account page can also sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
-- Users can delete their account from the account page (`POST /auth/delete-account`), which asks for their password. Accounts created with Google set one first with the reset link.
-  - Deletion is immediate: the user and every session go, Bearer JWTs stop working, and verified addresses get a "Your account was deleted" email.
-  - A superuser's `DELETE /users/{id}` gets the same cleanup and email.
-  - Tables you add with a foreign key to `user` need `ON DELETE CASCADE`: otherwise deleting fails, and changes nothing.
-  - Deletion doesn't reach emails already sent, logs (the `console` email backend logs whole emails) or database backups.
-- There's no `PATCH /users/me`: fastapi-users' version changed the password without the current one, and the email without confirming it, so anyone with a session could take the account over (new email, then "forgot password").
-- Users change their email from the account page (`POST /auth/request-email-change`), with their password, in two steps:
-  - The current address gets a link to approve the change. This happens always, even if it isn't verified, so someone who only knows the password can't move the account.
-  - Then the new address gets a link to confirm it. The account ends up verified with the new email, the old address gets a notice, and sessions stay.
-  - Changing or resetting the password cancels pending changes.
-  - If the current address can't approve (a typo at sign-up, a lost mailbox), delete the account and sign up again.
-  - Google sign-in matches accounts by email: after a change, signing in with Google with the old address creates a new, separate account.
+- Each session is a row in the database that stores only a hash of the cookie's token.
+  - Signing out ends it for real, and resetting the password ends every session of the account.
+  - Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
+  - Expired sessions are deleted too: a user's own when they sign in again, and all of them every time the app starts.
+- The account page can sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
 - API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`.
   - They carry a fingerprint of the password, so they stop working as soon as it changes: a change, a reset, or Google taking over an unverified account. The client then signs in again.
   - They can't be revoked any other way (signing out doesn't end them), so they last one hour.
 - State-changing requests that a browser sends from another site are rejected with `403`: their `Origin` must be `PUBLIC_URL` or the host the request went to. This adds to SameSite and also covers sign-in.
 
+## Account
+
+- Signed-in users change their password from the account page (`POST /auth/change-password`), which asks for the current one. That ends every other session of the account and gives this browser a new one.
+- They change their email from the account page (`POST /auth/request-email-change`), with their password, in two steps:
+  - The current address gets a link to approve the change. This happens always, even if it isn't verified, so someone who only knows the password can't move the account.
+  - Then the new address gets a link to confirm it. The account ends up verified with the new email, the old address gets a notice, and sessions stay.
+  - Changing or resetting the password cancels pending changes.
+  - If the current address can't approve (a typo at sign-up, a lost mailbox), delete the account and sign up again.
+  - Google sign-in matches accounts by email: after a change, signing in with Google with the old address creates a new, separate account.
+- They can delete their account from the account page (`POST /auth/delete-account`), which asks for their password. Accounts created with Google set one first with the reset link.
+  - Deletion is immediate: the user and every session go, Bearer JWTs stop working, and verified addresses get a "Your account was deleted" email.
+  - A superuser's `DELETE /users/{id}` gets the same cleanup and email.
+  - Tables you add with a foreign key to `user` need `ON DELETE CASCADE`: otherwise deleting fails, and changes nothing.
+  - Deletion doesn't reach emails already sent, logs (the `console` email backend logs whole emails) or database backups.
+- There's no `PATCH /users/me`: fastapi-users' version changed the password without the current one, and the email without confirming it, so anyone with a session could take the account over (new email, then "forgot password").
+
 ## Google sign-in
 
-Google only returns verified emails, so signing in with Google marks the account as verified. If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email. Accounts that verified their email keep their password.
+- To set it up, create an OAuth client of type "Web application" in the Google Cloud console.
+  - Its authorized redirect URIs must include `GOOGLE_REDIRECT_URI`, written exactly as in `config.toml`, including `ROOT_PATH`.
+  - Its client ID and secret go in the `[google]` section.
+- Google only returns verified emails, so signing in with Google marks the account as verified.
+- If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email. Accounts that verified their email keep their password.
 
-## Email: verification and password reset
+## Emails
 
 - Signing up sends a verification link; users can sign in before verifying, and the account page lets them ask for a new link. Routes that need a verified email can use `fastapi_users.current_user(active=True, verified=True)`.
 - "Forgot your password?" emails a reset link. Using it also verifies the account, since the link went to that address.
+- Changing the email sends an approval link to the current address, then a confirmation link to the new one, and a notice to the old one once it's done (see [Account](#account)).
 - Changing or resetting the password emails a "Your password was changed" notice. If it wasn't the owner, they find out and can take the account back with a reset link, which always reaches them because the email only changes with the current address's approval.
 - Deleting an account emails a "Your account was deleted" notice, but only to verified addresses: anyone can sign up someone else's address, and signing up and deleting over and over would flood it.
 - Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
