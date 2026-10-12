@@ -10,6 +10,25 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 3. From the repository root: `bash tmux_start_service.sh`. It starts Postgres, runs the database migrations (`uv run alembic upgrade head`) and starts the API (`uv run src/main_api.py`).
 4. Open `http://127.0.0.1:8000/login` (`http://127.0.0.1:8000/<ROOT_PATH>/login` if `ROOT_PATH` is set).
 
+To run it all in Docker instead, see [Docker](#docker).
+
+## Docker
+
+The `Dockerfile` builds an image with the API. It has the locked dependencies without the dev group and runs as an unprivileged user (UID 1000). On start it brings the database up to date (`alembic upgrade head`) and then serves on port 8000. Your `config.toml` isn't in the image: it's mounted when the container starts (`CONFIG_PATH`).
+
+To run Postgres and the API with Docker Compose:
+
+1. `cp docker-compose_template.yaml docker-compose.yml` and fill in the Postgres credentials.
+2. In `src/config.toml`, set `DB_HOST = "postgres"` (the service name), `DB_PORT = 5432` and the same credentials.
+3. `docker compose -p yourproject up -d --build`.
+
+- The API is published on `127.0.0.1:8000` only, and Postgres isn't published at all. Put a reverse proxy with HTTPS in front, and make `PUBLIC_URL` https.
+- The container's user (UID 1000) must be able to read the mounted `config.toml`. On most Linux machines that's your own user (check with `id -u`); otherwise make the file readable by UID 1000.
+- A reverse proxy reaches the container from a Docker network address, not from `127.0.0.1`, so the template sets `FORWARDED_ALLOW_IPS` to Docker's default ranges. Without it, every request would seem to come from the proxy and share the per-IP limits: 30 sign-in attempts per 15 minutes for the whole site, and five wrong passwords would lock an account for everyone. If you publish the port beyond `127.0.0.1`, or changed Docker's `default-address-pools`, set it to your proxy's address instead.
+- Other commands run without starting the server, e.g. `docker compose -p yourproject run --rm api alembic current`.
+- uvicorn takes its settings from `UVICORN_*` variables (`UVICORN_PORT`, ...). More workers (`WEB_CONCURRENCY`) need a shared store for the rate limits (`STORAGE_URI`, see [Rate limiting](#rate-limiting)).
+- The Python and uv images are pinned by digest. To update one, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`.
+
 ## Database migrations
 
 The schema is managed with Alembic (`src/migrations/`): the app doesn't create tables on startup.
@@ -50,7 +69,7 @@ Sign-in, registration and the routes that send emails are rate limited. Over a l
 
 - Change them in the optional `[rate_limits]` section of `config.toml` (see `config_template.toml`).
 - Counters live in memory, per process. With several workers, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.
-- Behind a reverse proxy, uvicorn must trust it to see the real client IPs. By default it trusts `127.0.0.1` and `::1`; for a proxy elsewhere, set `FORWARDED_ALLOW_IPS` to its address. Don't trust every address if the app can be reached directly: clients could fake their IP with `X-Forwarded-For`.
+- Behind a reverse proxy, uvicorn must trust it to see the real client IPs. By default it trusts `127.0.0.1` and `::1`; for a proxy elsewhere, set `FORWARDED_ALLOW_IPS` to its address (the Docker Compose template already does, see [Docker](#docker)). Don't trust every address if the app can be reached directly: clients could fake their IP with `X-Forwarded-For`.
 
 ## Security headers
 

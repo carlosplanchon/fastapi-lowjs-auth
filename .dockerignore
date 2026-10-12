@@ -1,0 +1,10 @@
+# Only what the image needs goes into the build: nothing secret (config.toml, the
+# filled-in compose files) or heavy (.venv, .git, .tools) can end up in it.
+*
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!src
+src/config.toml
+src/web/db
+**/__pycache__

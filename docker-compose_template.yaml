@@ -1,0 +1,44 @@
+# The whole app in Docker: Postgres and the API. Change name to docker-compose.yml
+# and fill it in. src/config.toml needs DB_HOST = "postgres", DB_PORT = 5432 and
+# the same Postgres credentials as below.
+# Start it with: docker compose -p yourproject up -d --build
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    # Not published: only the API reaches it, over the project's network.
+    volumes:
+      # Change yourproject to your project name.
+      - ~/apps/postgres_yourproject:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=...
+      - POSTGRES_USER=...
+      - POSTGRES_DB=...
+    healthcheck:
+      # Over TCP: during first-run init it only listens on a socket.
+      test: pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    depends_on:
+      # Its migrations run on start and need the database.
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src/config.toml:/run/secrets/config.toml:ro
+    environment:
+      - CONFIG_PATH=/run/secrets/config.toml
+      # A reverse proxy on the host reaches the API through the network's gateway,
+      # one in a container from its own address: both are in Docker's private
+      # ranges. Trusting them lets the API see the real client IPs (rate limits
+      # count per IP). Safe because the port is published on 127.0.0.1 only.
+      - FORWARDED_ALLOW_IPS=172.16.0.0/12,192.168.0.0/16
+    ports:
+      # 127.0.0.1:yourport:8000. Localhost only: put a reverse proxy with HTTPS in front.
+      # Docker bypasses host firewalls like ufw.
+      - 127.0.0.1:8000:8000
+    restart: unless-stopped
