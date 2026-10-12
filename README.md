@@ -1,4 +1,4 @@
-# fastapi_lowjs_auth
+# fastapi-lowjs-auth
 [![Tests](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml/badge.svg)](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml)
 
 FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + fastapi-sso / HTML + TailwindCSS + AlpineJS
