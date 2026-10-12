@@ -54,6 +54,7 @@ Google only returns verified emails, so signing in with Google marks the account
 
 - Signing up sends a verification link; users can sign in before verifying, and the account page lets them ask for a new link. Routes that need a verified email can use `fastapi_users.current_user(active=True, verified=True)`.
 - "Forgot your password?" emails a reset link. Using it also verifies the account, since the link went to that address.
+- Changing or resetting the password emails a "Your password was changed" notice. If it wasn't the owner, they find out and can take the account back with a reset link, which always reaches them because the email can't be changed.
 - Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
 - `[email] BACKEND = "console"` writes emails to the server log instead of sending them (development only). For real delivery set `BACKEND = "smtp"` and the `SMTP_*` settings. To try SMTP locally, a catch-all server such as [Mailpit](https://mailpit.axllent.org/) works: `SMTP_HOST = "127.0.0.1"`, `SMTP_PORT = 1025`, `SMTP_SECURITY = "none"`.
 

@@ -23,6 +23,15 @@ def link_in(email, name):
     return re.search(rf"(\S+)#{name}=(\S+)", body).groups()
 
 
+def change_password(client, prefix, current="long-secret", new="new-long-secret", headers=None):
+    token = sign_in(client, prefix).json()["access_token"]
+    return client.post(
+        f"{prefix}/auth/change-password",
+        json={"current_password": current, "new_password": new},
+        headers={"Authorization": f"Bearer {token}", **(headers or {})},
+    )
+
+
 def request_reset(client, prefix, sent_emails, **kwargs):
     response = client.post(f"{prefix}/auth/forgot-password", json={"email": "ana@example.com"}, **kwargs)
     assert response.status_code == 202
@@ -110,3 +119,34 @@ def test_reset_password_enforces_min_password_length(client, prefix, sent_emails
     response = client.post(f"{prefix}/auth/reset-password", json={"token": token, "password": "1234567"})
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "RESET_PASSWORD_INVALID_PASSWORD"
+
+
+def test_changing_the_password_sends_a_notice(client, prefix, sent_emails):
+    register(client, prefix)
+    sent_emails.clear()
+
+    # A forged Host must not end up in the link either.
+    assert change_password(client, prefix, headers={"host": "evil.example"}).status_code == 204
+    [(to, subject, body)] = sent_emails
+    assert (to, subject) == ("ana@example.com", "Your password was changed")
+    assert f"https://auth.example{prefix}/login\n" in body
+    assert "evil.example" not in body
+
+
+def test_resetting_the_password_sends_a_notice(client, prefix, sent_emails):
+    register(client, prefix)
+    _, token = link_in(request_reset(client, prefix, sent_emails), "reset_token")
+
+    client.post(f"{prefix}/auth/reset-password", json={"token": token, "password": "new-long-secret"})
+    assert sent_emails[-1][:2] == ("ana@example.com", "Your password was changed")
+
+
+def test_no_notice_when_the_password_does_not_change(client, prefix, sent_emails):
+    register(client, prefix)
+    assert change_password(client, prefix, current="wrong-password").status_code == 400
+    assert change_password(client, prefix, new="1234567").status_code == 400
+    _, token = link_in(request_reset(client, prefix, sent_emails), "reset_token")
+    response = client.post(f"{prefix}/auth/reset-password", json={"token": token, "password": "1234567"})
+    assert response.status_code == 400
+
+    assert "Your password was changed" not in [subject for _, subject, _ in sent_emails]

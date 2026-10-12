@@ -87,10 +87,13 @@ async def get_access_token_db(session: AsyncSession = Depends(get_async_session)
 MIN_PASSWORD_LENGTH = 8
 
 
+# Built from the configured public URL, never from the request's Host header: a
+# forged Host would make the links in emails point to an attacker's site.
+LOGIN_URL = f"{APP_PUBLIC_URL}{root_prefix}/login"
+
+
 def email_link(name: str, token: str) -> str:
-    # Built from the configured public URL, never from the request's Host header:
-    # a forged Host would make reset links point to an attacker's site.
-    return f"{APP_PUBLIC_URL}{root_prefix}/login#{name}={token}"
+    return f"{LOGIN_URL}#{name}={token}"
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
@@ -141,10 +144,26 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             await self.user_db.update(user, {"is_verified": True})
         # Whoever knew the old password may have a session: end them all.
         await self.end_all_sessions(user)
+        self.send_password_changed_email(user)
 
     async def on_after_update(self, user: User, update_dict: dict, request: Request | None = None) -> None:
         if "password" in update_dict:
             await self.end_all_sessions(user)
+            self.send_password_changed_email(user)
+
+    def send_password_changed_email(self, user: User) -> None:
+        # The owner hears about every change. If it wasn't them, a reset link gives
+        # them the account back: it goes to this same address, which can't be changed.
+        self.background_tasks.add_task(
+            mailer.send_email,
+            user.email,
+            "Your password was changed",
+            "The password of your account was just changed.\n\n"
+            "If it was you, you can ignore this email. If it wasn't, someone else may have "
+            "access to your account: choose a new password right away with "
+            "\"Forgot your password?\" on the sign-in page.\n\n"
+            f"{LOGIN_URL}\n",
+        )
 
     async def end_all_sessions(self, user: User) -> None:
         # Browser sessions only: Bearer JWTs can't be revoked and expire on their own.
