@@ -1,3 +1,5 @@
+import re
+
 from fastapi.testclient import TestClient
 
 
@@ -27,6 +29,18 @@ def delete_account(client, prefix, token, password="long-secret"):
         json={"password": password},
         headers={"Authorization": f"Bearer {token}"},
     )
+
+
+def request_email_change(client, prefix, token, password="long-secret"):
+    return client.post(
+        f"{prefix}/auth/request-email-change",
+        json={"new_email": "ana@new.example", "password": password},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def approve_email_change(client, prefix, token):
+    return client.post(f"{prefix}/auth/approve-email-change", json={"token": token})
 
 
 def assert_too_many(response):
@@ -112,6 +126,37 @@ def test_password_change_and_account_deletion_share_the_limit(client, prefix):
     assert_too_many(delete_account(client, prefix, token))
     assert_too_many(change_password(client, prefix, token))
     assert sign_in(client, prefix).status_code == 200
+
+
+def test_every_check_of_the_current_password_shares_the_limit(client, prefix):
+    assert register(client, prefix).status_code == 201
+    token = sign_in(client, prefix).json()["access_token"]
+    assert change_password(client, prefix, token, current="wrong-password").status_code == 400
+    assert delete_account(client, prefix, token, password="wrong-password").status_code == 400
+    for _ in range(3):
+        assert request_email_change(client, prefix, token, password="wrong-password").status_code == 400
+    assert_too_many(request_email_change(client, prefix, token))
+
+
+def test_email_changes_share_the_per_address_email_budget(client, prefix):
+    # The approval goes to the current address: it counts like a reset email.
+    assert register(client, prefix).status_code == 201
+    token = sign_in(client, prefix).json()["access_token"]
+    for _ in range(2):
+        assert ask_for_email(client, prefix).status_code == 202
+    assert request_email_change(client, prefix, token).status_code == 202
+    assert_too_many(ask_for_email(client, prefix))
+
+
+def test_approving_an_email_change_again_is_limited(client, prefix, sent_emails):
+    # Each approval emails the new address a confirmation link.
+    assert register(client, prefix).status_code == 201
+    token = sign_in(client, prefix).json()["access_token"]
+    assert request_email_change(client, prefix, token).status_code == 202
+    approve_token = re.search(r"#approve_email_token=(\S+)", sent_emails[-1][2]).group(1)
+    for _ in range(3):
+        assert approve_email_change(client, prefix, approve_token).status_code == 200
+    assert_too_many(approve_email_change(client, prefix, approve_token))
 
 
 def test_sign_ups_are_limited_per_address(client, prefix):

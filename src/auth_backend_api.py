@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
+import jwt
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -25,6 +26,7 @@ from fastapi_users import (
     FastAPIUsers,
     InvalidPasswordException,
     UUIDIDMixin,
+    exceptions,
     schemas,
 )
 from fastapi_users.authentication import (
@@ -33,9 +35,11 @@ from fastapi_users.authentication import (
     CookieTransport,
 )
 from fastapi_users.db import SQLAlchemyUserDatabase
+from fastapi_users.jwt import decode_jwt, generate_jwt
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -48,6 +52,7 @@ from sessions import (
     SESSION_LIFETIME_SECONDS,
     HashedDatabaseStrategy,
     PasswordBoundJWTStrategy,
+    password_fingerprint,
 )
 from shared import (
     APP_PUBLIC_URL,
@@ -109,6 +114,27 @@ def email_link(name: str, token: str) -> str:
     return f"{LOGIN_URL}#{name}={token}"
 
 
+# Changing the email takes two links: one to the current address to approve the
+# change, then one to the new address to confirm it.
+APPROVE_EMAIL_AUDIENCE = "fastapi-lowjs-auth:approve-email"
+CONFIRM_EMAIL_AUDIENCE = "fastapi-lowjs-auth:confirm-email"
+EMAIL_CHANGE_LINK_LIFETIME_SECONDS = 3600
+
+
+def email_change_token(audience: str, user: User, new_email: str) -> str:
+    # Bound to the current email and password: the change happens at most once, and
+    # changing or resetting the password cancels it. (After A→B and then B→A, an
+    # unexpired A→B link would work again: that takes B's mailbox, within the hour.)
+    data = {
+        "sub": str(user.id),
+        "old": user.email,
+        "new": new_email,
+        "pwd": password_fingerprint(JWT_SIGNING_SECRET_KEY, user.hashed_password),
+        "aud": audience,
+    }
+    return generate_jwt(data, JWT_SIGNING_SECRET_KEY, EMAIL_CHANGE_LINK_LIFETIME_SECONDS)
+
+
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = JWT_SIGNING_SECRET_KEY
     verification_token_secret = JWT_SIGNING_SECRET_KEY
@@ -166,7 +192,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
     def send_password_changed_email(self, user: User) -> None:
         # The owner hears about every change. If it wasn't them, a reset link gives
-        # them the account back: it goes to this same address, which can't be changed.
+        # them the account back: it goes to this same address, which only changes with
+        # its own approval.
         self.background_tasks.add_task(
             mailer.send_email,
             user.email,
@@ -203,6 +230,58 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             "Your account and its data were deleted, and every device signed in to it "
             "was signed out. This can't be undone.\n\n"
             f"You can sign up again with this email at any time:\n\n{LOGIN_URL}\n",
+        )
+
+    async def email_change_from_link(self, token: str, audience: str) -> tuple[User, str] | None:
+        """The user and their new email, if the link is valid and still applies."""
+        try:
+            claims = decode_jwt(token, JWT_SIGNING_SECRET_KEY, [audience])
+            user = await self.get(self.parse_id(str(claims.get("sub", ""))))
+        except (jwt.PyJWTError, exceptions.InvalidID, exceptions.UserNotExists):
+            return None
+        fingerprint = password_fingerprint(JWT_SIGNING_SECRET_KEY, user.hashed_password)
+        if (
+            not user.is_active
+            or user.email != claims.get("old")
+            or not secrets.compare_digest(str(claims.get("pwd", "")), fingerprint)
+        ):
+            return None
+        return user, str(claims.get("new", ""))
+
+    def send_email_change_approval(self, user: User, new_email: str) -> None:
+        # To the current address: only its owner can move the account elsewhere.
+        token = email_change_token(APPROVE_EMAIL_AUDIENCE, user, new_email)
+        self.background_tasks.add_task(
+            mailer.send_email,
+            user.email,
+            "Approve your new email",
+            f"Someone asked to change the email of your account to {new_email}.\n\n"
+            "If it was you, open this link to approve it. We'll then email the new "
+            "address a link to confirm it:\n\n"
+            f"{email_link('approve_email_token', token)}\n\n"
+            f"The link expires in {EMAIL_CHANGE_LINK_LIFETIME_SECONDS // 60} minutes. "
+            "If it wasn't you, don't approve it, and change your password: someone else knows it.\n",
+        )
+
+    def send_email_change_confirmation(self, user: User, new_email: str) -> None:
+        # Nothing about the account's current address: the requester picks who gets this.
+        token = email_change_token(CONFIRM_EMAIL_AUDIENCE, user, new_email)
+        self.background_tasks.add_task(
+            mailer.send_email,
+            new_email,
+            "Confirm your new email",
+            "Open this link to make this the email of your account:\n\n"
+            f"{email_link('confirm_email_token', token)}\n\n"
+            f"The link expires in {EMAIL_CHANGE_LINK_LIFETIME_SECONDS // 60} minutes. "
+            "If you didn't ask for this, you can ignore this email.\n",
+        )
+
+    def send_email_changed_notice(self, old_email: str, new_email: str) -> None:
+        self.background_tasks.add_task(
+            mailer.send_email,
+            old_email,
+            "Your email was changed",
+            f"The email of your account is now {new_email}: sign in with it from now on.\n",
         )
 
     async def on_after_login(self, user: User, request: Request | None = None, response=None) -> None:
@@ -504,6 +583,75 @@ async def delete_account(request: Request, body: AccountDeletion, user: CurrentU
     # The cookie is read before a Bearer token: if this request carried a live
     # one, it was this account's.
     return await cookie_transport.get_logout_response()
+
+
+# --> EMAIL CHANGE:
+class EmailChangeRequest(BaseModel):
+    new_email: EmailStr
+    password: str
+
+
+class EmailChangeLink(BaseModel):
+    token: str
+
+
+@app.post(
+    "/auth/request-email-change",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_class=Response,
+    name="auth:request_email_change",
+    tags=["auth"],
+)
+async def request_email_change(
+    request: Request, body: EmailChangeRequest, user: CurrentUser, user_manager: UserManagerDep
+):
+    await check_current_password(user_manager, user, body.password, "CHANGE_EMAIL_BAD_CREDENTIALS")
+    # Before the checks below, so that they can't be used to probe many addresses.
+    await rate_limits.email_requested(request, user.email)
+    if rate_limits.normalize(body.new_email) == rate_limits.normalize(user.email):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_SAME_EMAIL")
+    if await user_manager.user_db.get_by_email(body.new_email) is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
+    # Even when the current address isn't verified: without this step, anyone with
+    # the password could move the account and leave its owner no way back.
+    user_manager.send_email_change_approval(user, body.new_email)
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@app.post("/auth/approve-email-change", name="auth:approve_email_change", tags=["auth"])
+async def approve_email_change(request: Request, body: EmailChangeLink, user_manager: UserManagerDep):
+    # No session needed: the link proves access to the current address.
+    found = await user_manager.email_change_from_link(body.token, APPROVE_EMAIL_AUDIENCE)
+    if found is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_BAD_TOKEN")
+    user, new_email = found
+    # Approving again resends the confirmation: limited like any other email.
+    await rate_limits.email_requested(request, new_email)
+    if await user_manager.user_db.get_by_email(new_email) is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
+    user_manager.send_email_change_confirmation(user, new_email)
+    return {"email": new_email}
+
+
+@app.post("/auth/confirm-email-change", name="auth:confirm_email_change", tags=["auth"])
+async def confirm_email_change(body: EmailChangeLink, user_manager: UserManagerDep):
+    found = await user_manager.email_change_from_link(body.token, CONFIRM_EMAIL_AUDIENCE)
+    if found is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_BAD_TOKEN")
+    user, new_email = found
+    old_email = user.email
+    if await user_manager.user_db.get_by_email(new_email) is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
+    try:
+        # Not user_manager.update(): it would mark the account unverified, and this
+        # link just proved the new address. Sessions and Bearer tokens stay.
+        await user_manager.user_db.update(user, {"email": new_email, "is_verified": True})
+    except IntegrityError:  # someone signed up with it in the meantime
+        await user_manager.user_db.session.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
+    # The old address approved the change; it only gets the news.
+    user_manager.send_email_changed_notice(old_email, new_email)
+    return {"email": new_email}
 
 
 # --> GOOGLE LOGIN:

@@ -78,6 +78,13 @@ async def consume(limit, *key: str) -> None:
         raise HTTPException(429, "TOO_MANY_REQUESTS", headers={"Retry-After": str(retry_after)})
 
 
+async def email_requested(request: Request, address: object) -> None:
+    """For routes outside fastapi-users that email someone: the same budgets as the
+    reset and verification emails, per IP and per receiving address."""
+    await consume(EMAIL_REQUESTS_PER_IP, "email-ip", client_ip(request))
+    await consume(EMAILS_PER_ADDRESS, "email-to", normalize(address))
+
+
 async def login_succeeded(request: Request, email: str) -> None:
     # Only consecutive failures count towards the per-account login limit.
     await limiter.clear(LOGIN_FAILURES_PER_ACCOUNT, "login-failures", client_ip(request), normalize(email))

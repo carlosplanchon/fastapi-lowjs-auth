@@ -9,6 +9,10 @@ const ERROR_MESSAGES = {
   VERIFY_USER_BAD_TOKEN: "This verification link is invalid or has expired.",
   CHANGE_PASSWORD_BAD_CREDENTIALS: "Your current password is incorrect.",
   DELETE_ACCOUNT_BAD_CREDENTIALS: "Your password is incorrect.",
+  CHANGE_EMAIL_BAD_CREDENTIALS: "Your password is incorrect.",
+  CHANGE_EMAIL_SAME_EMAIL: "That's already your email.",
+  CHANGE_EMAIL_ALREADY_EXISTS: "An account with this email already exists.",
+  CHANGE_EMAIL_BAD_TOKEN: "This link is invalid or has expired. Please start the change again.",
   // From the Google callback, which redirects back here with #error=...
   GOOGLE_CANCELLED: "Google sign-in was cancelled.",
   GOOGLE_FAILED: "Google sign-in failed. Please try again.",
@@ -37,8 +41,10 @@ document.addEventListener("alpine:init", () => {
     return {
       /* state ----------------------------------------------------------- */
       view: "login",
-      email: "", password: "", password2: "", currentPassword: "",
+      email: "", password: "", password2: "", currentPassword: "", newEmail: "",
       error: "", notice: "", user: {}, resetToken: "", busy: false,
+      // From the links in emails, kept until the user clicks the button.
+      verifyToken: "", approveEmailToken: "", confirmEmailToken: "",
 
       /* lifecycle ---------------------------------------------------- */
       async init() {
@@ -52,17 +58,26 @@ document.addEventListener("alpine:init", () => {
 
       async openLink() {
         // Links carry their data in the URL fragment, which is never sent to the
-        // server: #error (Google sign-in), #reset_token and #verify_token (emails).
+        // server: #error (Google sign-in), and the tokens in emails.
         const params = new URLSearchParams(window.location.hash.slice(1));
         if (window.location.hash) history.replaceState({}, "", window.location.pathname);
 
         if (params.get("error")) this.error = errorMessage({ detail: params.get("error") });
-        if (params.get("reset_token")) {
-          this.resetToken = params.get("reset_token");
-          this.show("reset");
-          return;
+        // A link from an email opens its view, and nothing happens until the user
+        // clicks: mail scanners open links too.
+        const linkViews = {
+          reset_token: ["resetToken", "reset"],
+          verify_token: ["verifyToken", "verify-email"],
+          approve_email_token: ["approveEmailToken", "approve-email"],
+          confirm_email_token: ["confirmEmailToken", "confirm-email"],
+        };
+        for (const [name, [field, view]] of Object.entries(linkViews)) {
+          if (params.get(name)) {
+            this[field] = params.get(name);
+            this.show(view);
+            return;
+          }
         }
-        if (params.get("verify_token")) await this.verifyEmail(params.get("verify_token"));
 
         // JavaScript can't see the session cookie: ask the server.
         await this.fetchMe();
@@ -91,7 +106,7 @@ document.addEventListener("alpine:init", () => {
         this.error = this.notice = "";
         // Every form starts with empty password fields: after signing in, the
         // sign-in password would otherwise show up in the change-password form.
-        this.currentPassword = this.password = this.password2 = "";
+        this.currentPassword = this.password = this.password2 = this.newEmail = "";
       },
 
       /* actions --------------------------------------------------------- */
@@ -139,14 +154,78 @@ document.addEventListener("alpine:init", () => {
         }
       },
 
-      async verifyEmail(token) {
+      async verifyEmail() {
+        if (this.busy) return;
         this.error = this.notice = "";
+        this.busy = true;
         try {
-          await this.api("/auth/verify", { method: "POST", body: JSON.stringify({ token }) });
+          await this.api("/auth/verify", { method: "POST", body: JSON.stringify({ token: this.verifyToken }) });
           this.notice = "Your email is verified.";
         } catch (e) {
           if (e.detail === "VERIFY_USER_ALREADY_VERIFIED") this.notice = "Your email is already verified.";
           else this.error = errorMessage(e);
+        } finally {
+          this.busy = false;
+        }
+        this.verifyToken = "";
+        await this.fetchMe();
+      },
+
+      async requestEmailChange() {
+        if (this.busy) return;
+        this.error = this.notice = "";
+        this.busy = true;
+        try {
+          await this.api("/auth/request-email-change", {
+            method: "POST",
+            body: JSON.stringify({ new_email: this.newEmail, password: this.currentPassword })
+          });
+          this.show("dashboard");
+          this.notice = `To make sure it's you, we've emailed a link to ${this.user.email}. Open it to continue.`;
+        } catch (e) {
+          this.sessionActionFailed(e);
+        } finally {
+          this.busy = false;
+        }
+      },
+
+      async approveEmailChange() {
+        // A double click would send the new address two emails.
+        if (this.busy) return;
+        this.error = this.notice = "";
+        this.busy = true;
+        try {
+          const data = await this.api("/auth/approve-email-change", {
+            method: "POST",
+            body: JSON.stringify({ token: this.approveEmailToken })
+          });
+          this.approveEmailToken = "";
+          await this.fetchMe();
+          this.notice = `Approved. We've emailed ${data.email} a link to confirm your new email.`;
+        } catch (e) {
+          this.error = errorMessage(e);
+        } finally {
+          this.busy = false;
+        }
+      },
+
+      async confirmEmailChange() {
+        if (this.busy) return;
+        this.error = this.notice = "";
+        this.busy = true;
+        try {
+          const data = await this.api("/auth/confirm-email-change", {
+            method: "POST",
+            body: JSON.stringify({ token: this.confirmEmailToken })
+          });
+          this.confirmEmailToken = "";
+          this.email = data.email;  // for the sign-in form, if there's no session here
+          await this.fetchMe();
+          this.notice = `Your email is now ${data.email}.`;
+        } catch (e) {
+          this.error = errorMessage(e);
+        } finally {
+          this.busy = false;
         }
       },
 

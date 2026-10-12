@@ -38,6 +38,16 @@ class HashedDatabaseStrategy(DatabaseStrategy):
         await super().destroy_token(hash_token(token), user)
 
 
+def password_fingerprint(secret: str, hashed_password: str) -> str:
+    """A short value that changes whenever the password does, for tokens to carry.
+
+    Keyed with the signing secret, so a token reveals nothing about the hash. A
+    plain HMAC, cheap enough to check on every request.
+    """
+    digest = hmac.new(secret.encode(), b"password:" + hashed_password.encode(), hashlib.sha256)
+    return base64.urlsafe_b64encode(digest.digest()[:16]).rstrip(b"=").decode()
+
+
 class PasswordBoundJWTStrategy(JWTStrategy):
     """fastapi-users' JWTStrategy, with JWTs that stop working when the password changes.
 
@@ -47,10 +57,7 @@ class PasswordBoundJWTStrategy(JWTStrategy):
     """
 
     def fingerprint(self, user) -> str:
-        # Keyed with the signing secret, so the token reveals nothing about the hash.
-        # A plain HMAC, cheap enough to check on every request.
-        digest = hmac.new(self.secret.encode(), b"password:" + user.hashed_password.encode(), hashlib.sha256)
-        return base64.urlsafe_b64encode(digest.digest()[:16]).rstrip(b"=").decode()
+        return password_fingerprint(self.secret, user.hashed_password)
 
     async def write_token(self, user) -> str:
         data = {"sub": str(user.id), "aud": self.token_audience, "pwd": self.fingerprint(user)}

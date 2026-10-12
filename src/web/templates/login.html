@@ -132,6 +132,51 @@
         </div>
       </template>
 
+      <!-- Links from emails open a view with a button: mail scanners open links,
+           and nothing should happen until the person clicks. -->
+      <!-- PANEL VERIFY EMAIL ---------------------------------------------- -->
+      <template x-if="view==='verify-email'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Verify your email</h1>
+          <p class="mb-4">Confirm that this email address is yours.</p>
+          <button @click="verifyEmail"
+                  class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+            Confirm my email
+          </button>
+        </div>
+      </template>
+
+      <!-- PANEL APPROVE EMAIL CHANGE -------------------------------------- -->
+      <template x-if="view==='approve-email'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Approve email change</h1>
+          <p class="mb-4">
+            Approve the change of your account's email? We'll then email the new address
+            a link to confirm it.
+          </p>
+          <button @click="approveEmailChange"
+                  class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+            Approve
+          </button>
+          <p class="text-sm text-center mt-4">
+            If you didn't ask for this, don't approve it, and change your password:
+            someone else knows it.
+          </p>
+        </div>
+      </template>
+
+      <!-- PANEL CONFIRM EMAIL CHANGE -------------------------------------- -->
+      <template x-if="view==='confirm-email'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Confirm your new email</h1>
+          <p class="mb-4">Confirm that this is the new email of your account.</p>
+          <button @click="confirmEmailChange"
+                  class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+            Confirm new email
+          </button>
+        </div>
+      </template>
+
       <!-- PANEL DASHBOARD ------------------------------------------------- -->
       <template x-if="view==='dashboard'">
         <div>
@@ -147,6 +192,11 @@
               Resend verification email
             </button>
           </template>
+
+          <button @click="show('change-email')"
+                  class="w-full border border-gray-300 rounded py-2 mb-4 hover:bg-gray-50 transition">
+            Change email
+          </button>
 
           <button @click="show('change-password')"
                   class="w-full border border-gray-300 rounded py-2 mb-4 hover:bg-gray-50 transition">
@@ -167,6 +217,44 @@
                   class="w-full border border-red-600 text-red-700 rounded py-2 mt-4 hover:bg-red-50 transition">
             Delete account
           </button>
+        </div>
+      </template>
+
+      <!-- PANEL CHANGE EMAIL ---------------------------------------------- -->
+      <template x-if="view==='change-email'">
+        <div>
+          <h1 class="text-2xl font-semibold text-center mb-6">Change your email</h1>
+
+          <p class="mb-4">
+            Your email is <strong x-text="user.email"></strong>. We'll email it a link to
+            approve the change, then the new address a link to confirm it.
+          </p>
+
+          <form @submit.prevent="requestEmailChange" class="space-y-4">
+            <!-- For password managers: the account the password belongs to. -->
+            <input type="email" :value="user.email" readonly hidden
+                   aria-label="Email" autocomplete="username">
+            <input x-model="newEmail" type="email" placeholder="New email" required
+                   aria-label="New email" autocomplete="email"
+                   class="w-full border rounded px-3 py-2">
+            <input x-model="currentPassword" type="password" placeholder="Password" required
+                   aria-label="Password" autocomplete="current-password"
+                   class="w-full border rounded px-3 py-2">
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+              Continue
+            </button>
+          </form>
+
+          <p class="text-sm text-center mt-4">
+            Don't know your password (for example, you sign in with Google)?
+            <a href="#" @click.prevent="emailResetLink"
+               class="text-blue-600 hover:underline">Email me a reset link</a>
+          </p>
+          <p class="text-sm text-center mt-2">
+            <a href="#" @click.prevent="show('dashboard')"
+               class="text-blue-600 hover:underline">Back to my account</a>
+          </p>
         </div>
       </template>
 
