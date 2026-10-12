@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import time
 
 from fastapi import HTTPException, Request

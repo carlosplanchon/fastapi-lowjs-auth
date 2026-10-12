@@ -1,53 +1,62 @@
-#!/usr/bin/env python3
-
 import logging
 import secrets
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Response, BackgroundTasks, status
-from fastapi_users import FastAPIUsers, UUIDIDMixin, BaseUserManager, InvalidPasswordException
-from fastapi_users.db import SQLAlchemyUserDatabase
-from fastapi_users.authentication import AuthenticationBackend
-from fastapi_users.authentication import BearerTransport
-from fastapi_users.authentication import CookieTransport
-from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
-from fastapi_sso.sso.google import GoogleSSO
-
-from fastapi_users import schemas
-
-from pydantic import BaseModel
-from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-from typing import AsyncGenerator
-from fastapi.responses import RedirectResponse
-
-from fastapi.responses import HTMLResponse
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi_sso.sso.google import GoogleSSO
+from fastapi_users import (
+    BaseUserManager,
+    FastAPIUsers,
+    InvalidPasswordException,
+    UUIDIDMixin,
+    schemas,
+)
+from fastapi_users.authentication import (
+    AuthenticationBackend,
+    BearerTransport,
+    CookieTransport,
+)
+from fastapi_users.db import SQLAlchemyUserDatabase
+from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
+from pydantic import BaseModel
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 import mailer
 import rate_limits
 from models import AccessToken, User
 from origin_check import OriginCheckMiddleware
 from security_headers import SecurityHeadersMiddleware
-from sessions import SESSION_LIFETIME_SECONDS, HashedDatabaseStrategy, PasswordBoundJWTStrategy
-
-from shared import DB_URL
-
-from shared import GOOGLE_CLIENT_ID
-from shared import GOOGLE_CLIENT_SECRET
-from shared import GOOGLE_REDIRECT_URI
-
-from shared import APP_ROOT_PATH
-from shared import APP_PUBLIC_URL
-
-from shared import JWT_SIGNING_SECRET_KEY
-
+from sessions import (
+    SESSION_LIFETIME_SECONDS,
+    HashedDatabaseStrategy,
+    PasswordBoundJWTStrategy,
+)
+from shared import (
+    APP_PUBLIC_URL,
+    APP_ROOT_PATH,
+    DB_URL,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI,
+    JWT_SIGNING_SECRET_KEY,
+)
 
 if APP_ROOT_PATH != "":
     root_prefix = f"/{APP_ROOT_PATH}"
@@ -69,7 +78,7 @@ async_session_maker = sessionmaker(
 )
 
 
-async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_session() -> AsyncGenerator[AsyncSession]:
     async with async_session_maker() as session:
         yield session
 

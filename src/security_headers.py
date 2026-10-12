@@ -1,12 +1,9 @@
-#!/usr/bin/env python3
-
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-
 # For the app's pages: only its own files (no inline scripts or styles, and no
 # eval, thanks to Alpine's CSP build), nothing from other sites, no framing.
-CONTENT_SECURITY_POLICY = "; ".join([
+CSP_DIRECTIVES = (
     "default-src 'none'",
     "script-src 'self'",
     "style-src 'self'",
@@ -15,7 +12,8 @@ CONTENT_SECURITY_POLICY = "; ".join([
     "form-action 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
-])
+)
+CONTENT_SECURITY_POLICY = "; ".join(CSP_DIRECTIVES)
 
 # FastAPI's API docs load Swagger UI and ReDoc from a CDN, with inline scripts.
 DOCS_PATHS = ("/docs", "/redoc")

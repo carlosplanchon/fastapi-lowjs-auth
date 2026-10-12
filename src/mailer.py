@@ -1,12 +1,9 @@
-#!/usr/bin/env python3
-
 import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 
 from shared import EMAIL_SETTINGS
-
 
 logger = logging.getLogger(__name__)
 

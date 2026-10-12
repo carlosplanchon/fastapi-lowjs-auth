@@ -1,11 +1,8 @@
-#!/usr/bin/env python3
-
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 

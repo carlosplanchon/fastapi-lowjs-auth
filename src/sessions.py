@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import base64
 import hashlib
 import hmac
@@ -9,7 +7,6 @@ import jwt
 from fastapi_users.authentication import JWTStrategy
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
 from fastapi_users.jwt import decode_jwt, generate_jwt
-
 
 # How long a browser session lasts after signing in. Signing out, resetting or
 # changing the password end it earlier.

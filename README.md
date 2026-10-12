@@ -34,7 +34,7 @@ To run Postgres and the API with Docker Compose:
 The schema is managed with Alembic (`src/migrations/`): the app doesn't create tables on startup.
 
 - `uv run alembic upgrade head` brings the database up to date. `tmux_start_service.sh` runs it before starting the API.
-- After changing the models in `src/models.py`, run `uv run alembic revision --autogenerate -m "describe the change"`, review the file it creates in `src/migrations/versions/` and commit it. The tests, and so CI, fail if a model change has no migration.
+- After changing the models in `src/models.py`, run `uv run alembic revision --autogenerate -m "describe the change"`, review the file it creates in `src/migrations/versions/` and commit it. The tests, and so CI, fail if a model change has no migration. Alembic runs `ruff check --fix` on every new migration (`[post_write_hooks]` in `alembic.ini`), so it already passes the linter.
 - A database created before migrations existed (the app used to create its tables itself) already has the tables: run `uv run alembic stamp head` once instead, to mark it as up to date.
 
 ## Sessions
@@ -104,7 +104,7 @@ No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`
 ## Tests and CI
 
 - `uv run pytest` runs the tests (with SQLite and a simulated Google login, no Postgres needed).
-- `uv run ruff check` runs the linter. It looks for errors, not style: the rules are pinned in `pyproject.toml`, so a ruff update doesn't change them.
+- `uv run ruff check` runs the linter: ruff's default rules (likely bugs, modern syntax, import order) plus a few more error rules (`pyproject.toml`). `uv run ruff check --fix` fixes most findings. Ruff's version is pinned in `uv.lock`, so its defaults only change when Dependabot updates it, and any new finding shows up in that pull request's CI.
 
 GitHub Actions (`.github/workflows/tests.yml`) runs on every push to `main` and every pull request:
 

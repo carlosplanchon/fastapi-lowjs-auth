@@ -1,12 +1,8 @@
-#!/usr/bin/env python3
-
 import os
+import tomllib
 from pathlib import Path
 
-import tomllib
-
 from sqlalchemy import URL
-
 
 ##################
 # --- CONFIG --- #

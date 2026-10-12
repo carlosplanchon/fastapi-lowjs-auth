@@ -7,7 +7,6 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 
-
 ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"
 
 

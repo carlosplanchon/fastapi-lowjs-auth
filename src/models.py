@@ -1,10 +1,7 @@
-#!/usr/bin/env python3
-
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
 from sqlalchemy import MetaData
 from sqlalchemy.orm import declarative_base
-
 
 # Predictable constraint names, so later migrations can refer to them
 # (Alembic's recommended convention).

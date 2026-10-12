@@ -233,7 +233,8 @@ def test_google_callback_when_google_fails(client, prefix, app_module, monkeypat
     # page with a readable message instead of an error page.
     fake_google_account(monkeypatch, app_module, "new@gmail.com")
     for failure in (SSOLoginError(401, "User is not verified with Google"), ConnectionError("network down")):
-        async def verify_and_process(request, **kwargs):
+        # failure=failure binds this iteration's error, not whatever the loop ends on.
+        async def verify_and_process(request, failure=failure, **kwargs):
             raise failure
 
         monkeypatch.setattr(app_module.google_sso, "verify_and_process", verify_and_process)

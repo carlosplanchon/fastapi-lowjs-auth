@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi_users.jwt import generate_jwt
 from sqlalchemy import select, update
@@ -206,7 +206,7 @@ def test_sessions_expire(client, prefix, app_module):
     register(client, prefix)
     sign_in(client, prefix)
 
-    too_old = datetime.now(timezone.utc) - timedelta(seconds=SESSION_LIFETIME_SECONDS + 60)
+    too_old = datetime.now(UTC) - timedelta(seconds=SESSION_LIFETIME_SECONDS + 60)
     run_in_app(client, app_module, update(AccessToken).values(created_at=too_old))
     assert client.get(f"{prefix}/me").status_code == 401
 

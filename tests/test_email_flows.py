@@ -19,7 +19,7 @@ def me(client, prefix, password="long-secret"):
 
 def link_in(email, name):
     """Return the (url, token) of the "#name=token" link in an email's body."""
-    to, subject, body = email
+    _, _, body = email
     return re.search(rf"(\S+)#{name}=(\S+)", body).groups()
 
 
