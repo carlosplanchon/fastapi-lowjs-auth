@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import (
@@ -83,11 +84,15 @@ async def get_async_session() -> AsyncGenerator[AsyncSession]:
         yield session
 
 
-async def get_user_db(session: AsyncSession = Depends(get_async_session)):
+# One per request: everything that depends on it shares the same session.
+AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+
+
+async def get_user_db(session: AsyncSessionDep):
     yield SQLAlchemyUserDatabase(session, User)
 
 
-async def get_access_token_db(session: AsyncSession = Depends(get_async_session)):
+async def get_access_token_db(session: AsyncSessionDep):
     yield SQLAlchemyAccessTokenDatabase(session, AccessToken)
 
 
@@ -185,8 +190,14 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
 
 # --> USER MANAGER FACTORY:
-async def get_user_manager(background_tasks: BackgroundTasks, user_db=Depends(get_user_db)):
+async def get_user_manager(
+    background_tasks: BackgroundTasks,
+    user_db: Annotated[SQLAlchemyUserDatabase, Depends(get_user_db)],
+):
     yield UserManager(user_db, background_tasks)
+
+
+UserManagerDep = Annotated[UserManager, Depends(get_user_manager)]
 
 # --> AUTHENTICATION:
 # Browsers: an HttpOnly session cookie (JavaScript can't read it) backed by a row
@@ -201,8 +212,13 @@ cookie_transport = CookieTransport(
 )
 
 
-def get_database_strategy(access_token_db=Depends(get_access_token_db)) -> HashedDatabaseStrategy:
+def get_database_strategy(
+    access_token_db: Annotated[SQLAlchemyAccessTokenDatabase, Depends(get_access_token_db)],
+) -> HashedDatabaseStrategy:
     return HashedDatabaseStrategy(access_token_db, lifetime_seconds=SESSION_LIFETIME_SECONDS)
+
+
+SessionStrategyDep = Annotated[HashedDatabaseStrategy, Depends(get_database_strategy)]
 
 
 cookie_backend = AuthenticationBackend(
@@ -235,8 +251,10 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](
 )
 
 current_active_user = fastapi_users.current_user(active=True)
+CurrentUser = Annotated[User, Depends(current_active_user)]
 # The user and the token they signed in with: tells the session cookie from a Bearer JWT.
 current_active_user_and_token = fastapi_users.authenticator.current_user_token(active=True)
+CurrentUserAndToken = Annotated[tuple[User, str], Depends(current_active_user_and_token)]
 
 # --> GOOGLE SSO:
 google_sso = GoogleSSO(
@@ -364,7 +382,7 @@ async def login_page(request: Request):
 
 
 @app.get("/me")
-async def get_me(user: User = Depends(current_active_user)):
+async def get_me(user: CurrentUser):
     return {"email": user.email, "id": str(user.id), "is_verified": user.is_verified}
 
 
@@ -388,9 +406,9 @@ async def renew_this_session(request: Request, token: str, user: User, strategy:
 )
 async def logout_other_devices(
     request: Request,
-    user_and_token: tuple[User, str] = Depends(current_active_user_and_token),
-    user_manager: UserManager = Depends(get_user_manager),
-    strategy: HashedDatabaseStrategy = Depends(get_database_strategy),
+    user_and_token: CurrentUserAndToken,
+    user_manager: UserManagerDep,
+    strategy: SessionStrategyDep,
 ):
     # Every session ends, this one too, in case someone has a copy of this
     # browser's cookie. Then this browser gets a new one.
@@ -415,9 +433,9 @@ class PasswordChange(BaseModel):
 async def change_password(
     request: Request,
     body: PasswordChange,
-    user_and_token: tuple[User, str] = Depends(current_active_user_and_token),
-    user_manager: UserManager = Depends(get_user_manager),
-    strategy: HashedDatabaseStrategy = Depends(get_database_strategy),
+    user_and_token: CurrentUserAndToken,
+    user_manager: UserManagerDep,
+    strategy: SessionStrategyDep,
 ):
     user, token = user_and_token
     # Counted before checking: once blocked, even the right password gets a 429,
@@ -467,8 +485,8 @@ async def google_login():
 @app.get("/auth/google/callback")
 async def google_callback(
     request: Request,
-    user_manager: UserManager = Depends(get_user_manager),
-    strategy: HashedDatabaseStrategy = Depends(get_database_strategy),
+    user_manager: UserManagerDep,
+    strategy: SessionStrategyDep,
         ):
     expected_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
     state = request.query_params.get("state", "")

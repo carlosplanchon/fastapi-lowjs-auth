@@ -43,11 +43,8 @@ extend-select = [
     "BLE",    # except Exception that hides the error
     "S110",   # try/except/pass
     "T10",    # leftover breakpoint() and pdb
+    "FAST",   # FastAPI: dependencies declared with Annotated, and other mistakes
 ]
-
-[tool.ruff.lint.flake8-bugbear]
-# FastAPI's Depends() goes in default arguments by design (B008).
-extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.ruff.lint.per-file-ignores]
 # Migrations keep the template's imports (op, sa...) even when unused, ready for
