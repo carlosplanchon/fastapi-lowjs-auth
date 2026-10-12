@@ -8,6 +8,7 @@ const ERROR_MESSAGES = {
   RESET_PASSWORD_BAD_TOKEN: "This reset link is invalid or has expired. Please request a new one.",
   VERIFY_USER_BAD_TOKEN: "This verification link is invalid or has expired.",
   CHANGE_PASSWORD_BAD_CREDENTIALS: "Your current password is incorrect.",
+  DELETE_ACCOUNT_BAD_CREDENTIALS: "Your password is incorrect.",
   // From the Google callback, which redirects back here with #error=...
   GOOGLE_CANCELLED: "Google sign-in was cancelled.",
   GOOGLE_FAILED: "Google sign-in failed. Please try again.",
@@ -229,6 +230,28 @@ document.addEventListener("alpine:init", () => {
           // The server ends every session, this one too, and sets a new cookie here.
           await this.api("/auth/cookie/logout-others", { method: "POST" });
           this.notice = "Other devices have been signed out.";
+        } catch (e) {
+          this.sessionActionFailed(e);
+        } finally {
+          this.busy = false;
+        }
+      },
+
+      async deleteAccount() {
+        // A second submit would arrive without a session and report it as ended.
+        if (this.busy) return;
+        this.error = this.notice = "";
+        this.busy = true;
+        try {
+          // The server deletes the account and clears the session cookie.
+          await this.api("/auth/delete-account", {
+            method: "POST",
+            body: JSON.stringify({ password: this.currentPassword })
+          });
+          this.user = {};
+          this.email = "";
+          this.show("login");  // clears the notice: set it after
+          this.notice = "Your account has been deleted.";
         } catch (e) {
           this.sessionActionFailed(e);
         } finally {

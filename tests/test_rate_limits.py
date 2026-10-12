@@ -21,6 +21,14 @@ def change_password(client, prefix, token, current="long-secret", new="new-long-
     )
 
 
+def delete_account(client, prefix, token, password="long-secret"):
+    return client.post(
+        f"{prefix}/auth/delete-account",
+        json={"password": password},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
 def assert_too_many(response):
     assert response.status_code == 429
     assert response.json()["detail"] == "TOO_MANY_REQUESTS"
@@ -91,6 +99,30 @@ def test_a_successful_password_change_resets_the_failure_count(client, prefix):
     for _ in range(4):
         assert change_password(client, prefix, token, current="wrong-password").status_code == 400
     assert change_password(client, prefix, token, current="new-long-secret", new="newer-long-secret").status_code == 204
+
+
+def test_password_change_and_account_deletion_share_the_limit(client, prefix):
+    assert register(client, prefix).status_code == 201
+    token = sign_in(client, prefix).json()["access_token"]
+    for _ in range(3):
+        assert change_password(client, prefix, token, current="wrong-password").status_code == 400
+    for _ in range(2):
+        assert delete_account(client, prefix, token, password="wrong-password").status_code == 400
+    # Blocked on both, even with the right password, and nothing was deleted.
+    assert_too_many(delete_account(client, prefix, token))
+    assert_too_many(change_password(client, prefix, token))
+    assert sign_in(client, prefix).status_code == 200
+
+
+def test_sign_ups_are_limited_per_address(client, prefix):
+    # Each sign-up emails a verification link, and accounts can be deleted:
+    # signing up the same address over and over would flood it.
+    for _ in range(3):
+        assert register(client, prefix).status_code == 201
+        token = sign_in(client, prefix).json()["access_token"]
+        assert delete_account(client, prefix, token).status_code == 204
+    assert_too_many(register(client, prefix))
+    assert register(client, prefix, email="bob@example.com").status_code == 201
 
 
 def test_login_attempts_are_limited_per_ip_across_accounts(make_app):

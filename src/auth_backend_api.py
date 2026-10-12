@@ -184,6 +184,27 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
         await self.user_db.session.commit()
 
+    async def on_before_delete(self, user: User, request: Request | None = None) -> None:
+        # The database would cascade too, but SQLite only does with foreign keys on.
+        # No commit: user_db.delete() commits it with the user's row, so a delete that
+        # fails changes nothing.
+        await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
+
+    async def on_after_delete(self, user: User, request: Request | None = None) -> None:
+        # Verified addresses only: signing up someone else's address and deleting the
+        # account over and over would otherwise flood it. Also runs when a superuser
+        # deletes an account (DELETE /users/{id}), hence the neutral wording.
+        if not user.is_verified:
+            return
+        self.background_tasks.add_task(
+            mailer.send_email,
+            user.email,
+            "Your account was deleted",
+            "Your account and its data were deleted, and every device signed in to it "
+            "was signed out. This can't be undone.\n\n"
+            f"You can sign up again with this email at any time:\n\n{LOGIN_URL}\n",
+        )
+
     async def on_after_login(self, user: User, request: Request | None = None, response=None) -> None:
         if request is not None:
             await rate_limits.login_succeeded(request, user.email)
@@ -417,6 +438,17 @@ async def logout_other_devices(
     return await renew_this_session(request, token, user, strategy)
 
 
+# --> CURRENT PASSWORD CHECKS (password change, account deletion):
+async def check_current_password(user_manager: UserManager, user: User, password: str, error: str) -> None:
+    # Counted before checking: once blocked, even the right password gets a 429,
+    # so the answer doesn't tell whether a guess was right.
+    await rate_limits.current_password_attempted(user.id)
+    verified, _ = user_manager.password_helper.verify_and_update(password, user.hashed_password)
+    if not verified:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, error)
+    await rate_limits.current_password_succeeded(user.id)
+
+
 # --> PASSWORD CHANGE:
 class PasswordChange(BaseModel):
     current_password: str
@@ -438,13 +470,7 @@ async def change_password(
     strategy: SessionStrategyDep,
 ):
     user, token = user_and_token
-    # Counted before checking: once blocked, even the right password gets a 429,
-    # so the answer doesn't tell whether a guess was right.
-    await rate_limits.password_change_attempted(user.id)
-    verified, _ = user_manager.password_helper.verify_and_update(body.current_password, user.hashed_password)
-    if not verified:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_PASSWORD_BAD_CREDENTIALS")
-    await rate_limits.password_change_succeeded(user.id)
+    await check_current_password(user_manager, user, body.current_password, "CHANGE_PASSWORD_BAD_CREDENTIALS")
 
     try:
         # on_after_update ends every session of the account, this one included.
@@ -457,6 +483,27 @@ async def change_password(
 
     # After the update, so that the new session isn't ended too.
     return await renew_this_session(request, token, user, strategy)
+
+
+# --> ACCOUNT DELETION:
+class AccountDeletion(BaseModel):
+    password: str
+
+
+@app.post(
+    "/auth/delete-account",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    name="auth:delete_account",
+    tags=["auth"],
+)
+async def delete_account(request: Request, body: AccountDeletion, user: CurrentUser, user_manager: UserManagerDep):
+    await check_current_password(user_manager, user, body.password, "DELETE_ACCOUNT_BAD_CREDENTIALS")
+    # The hooks end every session and email the owner.
+    await user_manager.delete(user, request=request)
+    # The cookie is read before a Bearer token: if this request carried a live
+    # one, it was this account's.
+    return await cookie_transport.get_logout_response()
 
 
 # --> GOOGLE LOGIN:

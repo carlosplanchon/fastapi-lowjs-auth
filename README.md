@@ -43,6 +43,11 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 - Each session is a row in the database that stores only a hash of the cookie's token. Signing out ends it for real, and resetting the password ends every session of the account. Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
 - Signed-in users change their password from the account page (`POST /auth/change-password`), which asks for the current one. That ends every other session of the account and gives this browser a new one.
 - The account page can also sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
+- Users can delete their account from the account page (`POST /auth/delete-account`), which asks for their password. Accounts created with Google set one first with the reset link.
+  - Deletion is immediate: the user and every session go, Bearer JWTs stop working, and verified addresses get a "Your account was deleted" email.
+  - A superuser's `DELETE /users/{id}` gets the same cleanup and email.
+  - Tables you add with a foreign key to `user` need `ON DELETE CASCADE`: otherwise deleting fails, and changes nothing.
+  - Deletion doesn't reach emails already sent, logs (the `console` email backend logs whole emails) or database backups.
 - There's no `PATCH /users/me`: fastapi-users' version changed the password without the current one, and the email without confirming it, so anyone with a session could take the account over (new email, then "forgot password"). Changing the email isn't supported.
 - API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`.
   - They carry a fingerprint of the password, so they stop working as soon as it changes: a change, a reset, or Google taking over an unverified account. The client then signs in again.
@@ -58,12 +63,13 @@ Google only returns verified emails, so signing in with Google marks the account
 - Signing up sends a verification link; users can sign in before verifying, and the account page lets them ask for a new link. Routes that need a verified email can use `fastapi_users.current_user(active=True, verified=True)`.
 - "Forgot your password?" emails a reset link. Using it also verifies the account, since the link went to that address.
 - Changing or resetting the password emails a "Your password was changed" notice. If it wasn't the owner, they find out and can take the account back with a reset link, which always reaches them because the email can't be changed.
+- Deleting an account emails a "Your account was deleted" notice, but only to verified addresses: anyone can sign up someone else's address, and signing up and deleting over and over would flood it.
 - Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
 - `[email] BACKEND = "console"` writes emails to the server log instead of sending them (development only). For real delivery set `BACKEND = "smtp"` and the `SMTP_*` settings. To try SMTP locally, a catch-all server such as [Mailpit](https://mailpit.axllent.org/) works: `SMTP_HOST = "127.0.0.1"`, `SMTP_PORT = 1025`, `SMTP_SECURITY = "none"`.
 
 ## Rate limiting
 
-Sign-in, registration, password changes and the routes that send emails are rate limited. Over a limit, the API answers `429` with a `Retry-After` header.
+Sign-in, registration, password changes, account deletion and the routes that send emails are rate limited. Over a limit, the API answers `429` with a `Retry-After` header.
 
 | Limit | Default |
 |---|---|
@@ -72,7 +78,8 @@ Sign-in, registration, password changes and the routes that send emails are rate
 | Reset and verification emails per address, counted whether the account exists or not | 3 per hour |
 | Reset and verification email requests per IP | 10 per hour |
 | Registrations per IP | 10 per hour |
-| Wrong current passwords in a row when changing it, per account (a successful change resets it) | 5 per 15 minutes |
+| Registrations per address, since each one emails a verification link | 3 per hour |
+| Wrong current passwords in a row, per account, counted together for password changes and account deletion (a correct one resets it) | 5 per 15 minutes |
 
 - Change them in the optional `[rate_limits]` section of `config.toml` (see `config_template.toml`).
 - Counters live in memory, per process. With several workers, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.

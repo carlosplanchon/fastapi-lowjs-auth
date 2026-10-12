@@ -55,7 +55,14 @@ async def enforce(request: Request) -> None:
             (EMAILS_PER_ADDRESS, "email-to", email),
         ]
     elif route == "register:register":
-        checks = [(REGISTRATIONS_PER_IP, "register-ip", ip)]
+        body = await request.json()
+        email = normalize(body.get("email", "") if isinstance(body, dict) else "")
+        checks = [
+            (REGISTRATIONS_PER_IP, "register-ip", ip),
+            # Each sign-up emails a verification link: with accounts that can be
+            # deleted, signing up the same address over and over would flood it.
+            (EMAILS_PER_ADDRESS, "register-to", email),
+        ]
     else:
         return
 
@@ -76,11 +83,13 @@ async def login_succeeded(request: Request, email: str) -> None:
     await limiter.clear(LOGIN_FAILURES_PER_ACCOUNT, "login-failures", client_ip(request), normalize(email))
 
 
-async def password_change_attempted(user_id: object) -> None:
-    # Per account, not per IP: only someone signed in to it gets this far, and
-    # switching IPs mustn't buy more guesses at the current password.
-    await consume(PASSWORD_CHANGE_FAILURES_PER_ACCOUNT, "password-change-failures", str(user_id))
+async def current_password_attempted(user_id: object) -> None:
+    # One count per account for every check of the current password (changing it,
+    # deleting the account), so using both doesn't buy more guesses. Per account,
+    # not per IP: only someone signed in to it gets this far, and switching IPs
+    # mustn't buy more guesses either.
+    await consume(PASSWORD_CHANGE_FAILURES_PER_ACCOUNT, "current-password-failures", str(user_id))
 
 
-async def password_change_succeeded(user_id: object) -> None:
-    await limiter.clear(PASSWORD_CHANGE_FAILURES_PER_ACCOUNT, "password-change-failures", str(user_id))
+async def current_password_succeeded(user_id: object) -> None:
+    await limiter.clear(PASSWORD_CHANGE_FAILURES_PER_ACCOUNT, "current-password-failures", str(user_id))

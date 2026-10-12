@@ -47,9 +47,10 @@ STORAGE_URI = "memory://"
 LOGIN_FAILURES_PER_ACCOUNT = "5/15minutes"
 LOGIN_ATTEMPTS_PER_IP = "30/15minutes"
 # Password reset and verification emails per address, and their requests per IP.
+# EMAILS_PER_ADDRESS also limits sign-ups per address, since each one emails a link.
 EMAILS_PER_ADDRESS = "3/hour"
 EMAIL_REQUESTS_PER_IP = "10/hour"
 REGISTRATIONS_PER_IP = "10/hour"
-# Wrong current passwords in a row when changing it, per account (a successful
-# change resets it).
+# Wrong current passwords in a row, per account, counted together for changing the
+# password and deleting the account (a correct one resets it).
 PASSWORD_CHANGE_FAILURES_PER_ACCOUNT = "5/15minutes"
