@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      - name: Lint
+        run: uv run ruff check
+
       - name: Run tests
         run: uv run pytest
 
@@ -32,3 +35,65 @@ jobs:
           bash build_css.sh
           git diff --exit-code -- src/web/static/app.css \
             || { echo "::error::src/web/static/app.css is out of date: run 'bash build_css.sh' and commit it."; exit 1; }
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Like a real deployment: the compose template filled in, and src/config.toml
+      # where the real one goes. Both hold a password that must stay out of the image.
+      - name: Fill in the Docker Compose template and the config
+        run: |
+          sed -e 's/POSTGRES_PASSWORD=\.\.\./POSTGRES_PASSWORD=ci-secret-not-in-image/' \
+              -e 's/POSTGRES_USER=\.\.\./POSTGRES_USER=app/' \
+              -e 's/POSTGRES_DB=\.\.\./POSTGRES_DB=app/' \
+              docker-compose_template.yaml > docker-compose.yml
+          cat > src/config.toml <<'EOF'
+          [app]
+          ROOT_PATH = ""
+          PUBLIC_URL = "http://127.0.0.1:8000"
+
+          [database]
+          DB_HOST = "postgres"
+          DB_PORT = 5432
+          DB_NAME = "app"
+          DB_USERNAME = "app"
+          DB_PASSWORD = "ci-secret-not-in-image"
+
+          [security]
+          JWT_SIGNING_SECRET_KEY = "ci-secret-not-in-image-and-at-least-32-bytes"
+
+          [google]
+          GOOGLE_CLIENT_ID = "ci"
+          GOOGLE_CLIENT_SECRET = "ci-secret-not-in-image"
+          GOOGLE_REDIRECT_URI = "http://127.0.0.1:8000/auth/google/callback"
+
+          [email]
+          BACKEND = "console"
+          FROM_ADDRESS = "no-reply@example.com"
+          EOF
+
+      - name: Build the image and start Postgres and the API
+        run: docker compose up -d --build
+
+      # The first request also waits for the migrations and the server to start.
+      - name: Check that the API serves the sign-in page and its files
+        run: |
+          for path in login static/app.css static/app.js; do
+            curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-all-errors \
+              -o /dev/null "http://127.0.0.1:8000/$path"
+          done
+
+      - name: Check that no secret ended up in the image
+        run: |
+          # grep exits with 1 when it finds nothing: 0 would mean a leak, 2 an error.
+          status=0
+          docker compose run --rm --no-deps -T api grep -rq ci-secret-not-in-image /app || status=$?
+          test "$status" -eq 1
+
+      - name: Show the logs
+        if: failure()
+        run: docker compose logs

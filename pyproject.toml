@@ -21,8 +21,24 @@ dev = [
     "ipython>=9.2.0",
     "prettyprinter>=0.18.0",
     "pytest>=9.1.1",
+    "ruff>=0.17.0",
 ]
 
 [tool.pytest]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+# Errors, not style. Pinned so a ruff update can't change what CI checks.
+select = [
+    "F",      # pyflakes: unused imports and variables, undefined names
+    "E4",     # pycodestyle errors a formatter doesn't fix: imports,
+    "E7",     #   statements (bare except, ...),
+    "E9",     #   syntax and I/O errors
+    "W6",     # invalid escape sequences
+    "PLE",    # pylint errors
+    "ASYNC",  # blocking calls inside async functions
+    "BLE",    # except Exception that hides the error
+    "S110",   # try/except/pass
+    "T10",    # leftover breakpoint() and pdb
+]

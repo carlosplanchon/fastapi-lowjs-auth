@@ -27,7 +27,7 @@ To run Postgres and the API with Docker Compose:
 - A reverse proxy reaches the container from a Docker network address, not from `127.0.0.1`, so the template sets `FORWARDED_ALLOW_IPS` to Docker's default ranges. Without it, every request would seem to come from the proxy and share the per-IP limits: 30 sign-in attempts per 15 minutes for the whole site, and five wrong passwords would lock an account for everyone. If you publish the port beyond `127.0.0.1`, or changed Docker's `default-address-pools`, set it to your proxy's address instead.
 - Other commands run without starting the server, e.g. `docker compose -p yourproject run --rm api alembic current`.
 - uvicorn takes its settings from `UVICORN_*` variables (`UVICORN_PORT`, ...). More workers (`WEB_CONCURRENCY`) need a shared store for the rate limits (`STORAGE_URI`, see [Rate limiting](#rate-limiting)).
-- The Python and uv images are pinned by digest. To update one, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`.
+- The Python and uv images are pinned by digest, and Dependabot proposes their updates (see [Tests and CI](#tests-and-ci)). To update one by hand, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`.
 
 ## Database migrations
 
@@ -94,8 +94,18 @@ No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`
 - JS: the page's logic is in `app.js`, as an Alpine component (`Alpine.data("authApp", ...)`).
 - Alpine.js: `alpine-csp-3.17.4.min.js`, the CSP build (`dist/cdn.min.js` from the `@alpinejs/csp` npm package), so the CSP doesn't need `'unsafe-eval'`. Its expressions are simpler than the regular build's (no arrow functions, template literals or globals like `window`): keep the attributes short and the logic in `app.js`. To update it, replace the file and its reference in `login.html`.
 
-## Tests
+## Tests and CI
 
-`uv run pytest` (uses SQLite and a simulated Google login, no Postgres needed).
+- `uv run pytest` runs the tests (with SQLite and a simulated Google login, no Postgres needed).
+- `uv run ruff check` runs the linter. It looks for errors, not style: the rules are pinned in `pyproject.toml`, so a ruff update doesn't change them.
 
-GitHub Actions runs them on every push to `main` and every pull request, and also checks that `src/web/static/app.css` matches the templates (`.github/workflows/tests.yml`).
+GitHub Actions (`.github/workflows/tests.yml`) runs on every push to `main` and every pull request:
+
+- the linter and the tests, and a check that `src/web/static/app.css` matches the templates;
+- the Docker image, built and started from the compose template with Postgres. It checks that the API serves the sign-in page, and that no password from `config.toml` or the compose file ended up in the image.
+
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the actions, the Python packages and the Docker images.
+
+- Minor and patch updates come grouped, one pull request per kind; major ones come one by one.
+- A new release waits a week before Dependabot proposes it. The uv image can't wait, because its registry gives no release dates.
+- It doesn't propose a new Python version, which is a decision of its own, or a new major version of Postgres, which can't read the previous one's data.
