@@ -1,7 +1,9 @@
 import re
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi_sso.sso.base import OpenID, SSOLoginError
+from fastapi_users.db import SQLAlchemyUserDatabase
 
 
 def fake_google_account(monkeypatch, app_module, email):
@@ -138,13 +140,26 @@ def test_google_login_existing_user(client, prefix, app_module, monkeypatch):
     assert second.json()["id"] == first.json()["id"]
 
 
-def test_google_login_takes_over_unverified_account(client, prefix, app_module, monkeypatch):
-    # Someone registers the email with a password first: it may be an attacker.
+def register_first(client, prefix):
+    """Someone registers the email with a password first: it may be an attacker.
+    Returns the session cookie of the browser they sign in from."""
     response = client.post(
         f"{prefix}/auth/register",
         json={"email": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 201
+    response = client.post(
+        f"{prefix}/auth/cookie/login",
+        data={"username": "ana@gmail.com", "password": "long-secret"},
+    )
+    assert response.status_code == 204
+    cookie = client.cookies["session"]
+    client.cookies.clear()
+    return cookie
+
+
+def test_google_login_takes_over_unverified_account(client, prefix, app_module, monkeypatch):
+    squatter_cookie = register_first(client, prefix)
     squatter_token = client.post(
         f"{prefix}/auth/jwt/login",
         data={"username": "ana@gmail.com", "password": "long-secret"},
@@ -162,9 +177,39 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
         data={"username": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 400
-    # ...and neither do the tokens it got (only the token: no session cookie).
+    # ...nor the squatter's Bearer token (sent alone: no session cookie)...
     response = client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {squatter_token}", "Cookie": ""})
     assert response.status_code == 401
+    # ...nor the squatter's browser session.
+    response = client.get(f"{prefix}/me", headers={"Cookie": f"session={squatter_cookie}"})
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("failing_step", ["sessions", "account"])
+def test_a_failed_google_takeover_changes_nothing(client, prefix, app_module, monkeypatch, failing_step):
+    squatter_cookie = register_first(client, prefix)
+
+    async def fail(*args):
+        raise RuntimeError("database down")
+
+    if failing_step == "sessions":
+        monkeypatch.setattr(app_module.UserManager, "delete_sessions", fail)
+    else:
+        monkeypatch.setattr(SQLAlchemyUserDatabase, "update", fail)
+    fake_google_account(monkeypatch, app_module, "ana@gmail.com")
+    state = start_google_login(client, prefix)
+    with pytest.raises(RuntimeError):
+        google_callback(client, prefix, code="test", state=state)
+
+    # Ending the sessions and taking the account over go in one transaction: if
+    # either step fails, nothing changes, so no takeover leaves the sessions alive.
+    response = client.post(
+        f"{prefix}/auth/jwt/login",
+        data={"username": "ana@gmail.com", "password": "long-secret"},
+    )
+    assert response.status_code == 200
+    assert get_user(client, prefix, response.json()["access_token"]).json()["is_verified"] is False
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={squatter_cookie}"}).status_code == 200
 
 
 def test_google_login_keeps_the_password_of_a_verified_account(

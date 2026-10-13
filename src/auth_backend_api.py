@@ -163,7 +163,9 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             "Verify your email",
             "Confirm your email address by opening this link:\n\n"
             f"{email_link('verify_token', token)}\n\n"
-            f"The link expires in {self.verification_token_lifetime_seconds // 60} minutes.\n",
+            f"The link expires in {self.verification_token_lifetime_seconds // 60} minutes. "
+            "If you didn't sign up, ignore this email: someone else used your address, "
+            "and confirming it would verify their account.\n",
         )
 
     async def on_after_forgot_password(self, user: User, token: str, request: Request | None = None) -> None:
@@ -209,14 +211,18 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     async def end_all_sessions(self, user: User) -> None:
         # Browser sessions only. Bearer JWTs stop working by themselves when the
         # password changes (PasswordBoundJWTStrategy), and otherwise expire within the hour.
-        await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
+        await self.delete_sessions(user)
         await self.user_db.session.commit()
+
+    async def delete_sessions(self, user: User) -> None:
+        # Without committing: for callers that commit it together with their own change.
+        await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
 
     async def on_before_delete(self, user: User, request: Request | None = None) -> None:
         # The database would cascade too, but SQLite only does with foreign keys on.
         # No commit: user_db.delete() commits it with the user's row, so a delete that
         # fails changes nothing.
-        await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
+        await self.delete_sessions(user)
 
     async def on_after_delete(self, user: User, request: Request | None = None) -> None:
         # Verified addresses only: signing up someone else's address and deleting the
@@ -274,7 +280,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             "Open this link to make this the email of your account:\n\n"
             f"{email_link('confirm_email_token', token)}\n\n"
             f"The link expires in {EMAIL_CHANGE_LINK_LIFETIME_SECONDS // 60} minutes. "
-            "If you didn't ask for this, you can ignore this email.\n",
+            "If you didn't ask for this, ignore this email: confirming would make your "
+            "address the email of someone else's account.\n",
         )
 
     def send_email_changed_notice(self, old_email: str, new_email: str) -> None:
@@ -726,6 +733,10 @@ async def google_callback(
             "is_verified": True,
         }
         if user:
+            # Whoever set that password may still be signed in: end their sessions.
+            # No commit: user_db.update() commits it with the takeover, so both
+            # happen or neither does.
+            await user_manager.delete_sessions(user)
             user = await user_manager.user_db.update(user, google_fields)
         else:
             user = await user_manager.user_db.create({

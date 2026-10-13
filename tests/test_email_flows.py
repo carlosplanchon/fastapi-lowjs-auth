@@ -43,6 +43,8 @@ def test_registration_sends_a_verification_link(client, prefix, sent_emails):
 
     [email] = sent_emails
     assert email[:2] == ("ana@example.com", "Verify your email")
+    # Anyone can sign up someone else's address: its owner is told not to confirm.
+    assert "If you didn't sign up, ignore this email" in email[2]
     url, token = link_in(email, "verify_token")
     assert url == f"https://auth.example{prefix}/login"
 

@@ -140,11 +140,15 @@
       <template x-if="view==='verify-email'">
         <div>
           <h1 class="text-2xl font-semibold text-center mb-6">Verify your email</h1>
-          <p class="mb-4">Confirm that this email address is yours.</p>
+          <p class="mb-4">Confirm that you signed up with this email address.</p>
           <button @click="verifyEmail"
                   class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
             Confirm my email
           </button>
+          <p class="text-sm text-center mt-4">
+            If you didn't sign up, close this page: someone else used your address,
+            and confirming it would verify their account.
+          </p>
         </div>
       </template>
 
@@ -176,6 +180,10 @@
                   class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
             Confirm new email
           </button>
+          <p class="text-sm text-center mt-4">
+            If you didn't ask for this, close this page: confirming would make your
+            address the email of someone else's account.
+          </p>
         </div>
       </template>
 

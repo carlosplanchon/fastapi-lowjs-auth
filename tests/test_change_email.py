@@ -74,6 +74,8 @@ def test_changing_the_email(client, prefix, app_module, sent_emails):
     [confirmation] = sent_emails
     assert confirmation[:2] == ("ana@new.example", "Confirm your new email")
     assert "ana@example.com" not in confirmation[2]
+    # The requester picks this address: its owner is told not to confirm.
+    assert "If you didn't ask for this, ignore this email" in confirmation[2]
     url, confirm_token = link_in(confirmation, "confirm_email_token")
     assert url == f"https://auth.example{prefix}/login"
 

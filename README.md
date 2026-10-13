@@ -17,6 +17,8 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 - A frontend with no JavaScript build: Jinja templates, Alpine.js (its CSP build) and Tailwind, with no CDNs.
 - Alembic migrations, a Dockerfile with a Docker Compose template, and CI with tests, lint, an image check and Dependabot.
 
+It doesn't include two-factor authentication, passkeys, a sign-in history or a list of signed-in devices (the account page can only sign out all the others at once).
+
 ## Quick start
 
 You need [uv](https://docs.astral.sh/uv/), Docker with Compose, and tmux.
@@ -42,7 +44,8 @@ To run Postgres and the API with Docker Compose:
 - The container's user (UID 1000) must be able to read the mounted `config.toml`. On most Linux machines that's your own user (check with `id -u`); otherwise make the file readable by UID 1000.
 - A reverse proxy reaches the container from a Docker network address, not from `127.0.0.1`, so the template sets `FORWARDED_ALLOW_IPS` to Docker's default ranges. Without it, every request would seem to come from the proxy and share the per-IP limits: 30 sign-in attempts per 15 minutes for the whole site, and five wrong passwords would lock an account for everyone. If you publish the port beyond `127.0.0.1`, or changed Docker's `default-address-pools`, set it to your proxy's address instead.
 - Other commands run without starting the server, e.g. `docker compose -p yourproject run --rm api alembic current`.
-- uvicorn takes its settings from `UVICORN_*` variables (`UVICORN_PORT`, ...). More workers (`WEB_CONCURRENCY`) need a shared store for the rate limits (`STORAGE_URI`, see [Rate limiting](#rate-limiting)).
+- With several replicas, don't let each one migrate as it starts: run `alembic upgrade head` once per deploy, as its own step (like the command above), and give the replicas `uvicorn auth_backend_api:app --app-dir src` as their command.
+- uvicorn takes its settings from `UVICORN_*` variables (`UVICORN_PORT`, ...). More workers (`WEB_CONCURRENCY`) or replicas need a shared store for the rate limits (`STORAGE_URI`, see [Rate limiting](#rate-limiting)).
 - The Python and uv images are pinned by digest, and Dependabot proposes their updates (see [Tests and CI](#tests-and-ci)). To update one by hand, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`.
 
 ## Database migrations
@@ -57,7 +60,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 
 - Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
 - Each session is a row in the database that stores only a hash of the cookie's token.
-  - Signing out ends it for real, and resetting the password ends every session of the account.
+  - Signing out ends it for real. Resetting the password, or Google taking over an unverified account, ends every session of the account.
   - Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
   - Expired sessions are deleted too: a user's own when they sign in again, and all of them every time the app starts.
 - The account page can sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
@@ -88,7 +91,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
   - Its authorized redirect URIs must include `GOOGLE_REDIRECT_URI`, written exactly as in `config.toml`, including `ROOT_PATH`.
   - Its client ID and secret go in the `[google]` section.
 - Google only returns verified emails, so signing in with Google marks the account as verified.
-- If an unverified email/password account already uses that email, Google wins: the user gets into that account and its old password stops working, since whoever set it never proved they own the email. Accounts that verified their email keep their password.
+- If an unverified email/password account already uses that email, Google wins, since whoever set its password never proved they own the email: the user gets into that account, the old password stops working, and every earlier session and Bearer JWT of the account ends. Accounts that verified their email keep their password.
 
 ## Emails
 
@@ -99,6 +102,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 - Deleting an account emails a "Your account was deleted" notice, but only to verified addresses: anyone can sign up someone else's address, and signing up and deleting over and over would flood it.
 - Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
 - A link opens a page with a button, and nothing happens until the person clicks. Mail scanners open links too: a verification that ran on its own could verify an address its owner never saw.
+- The emails and pages that verify an address or confirm a new one tell whoever didn't ask for them not to confirm. Anyone can type someone else's address when signing up or changing their email; if the owner confirmed it, that account would be verified with a password someone else knows, and signing in with Google would later take the owner into it.
 - `[email] BACKEND = "console"` writes emails to the server log instead of sending them (development only). For real delivery set `BACKEND = "smtp"` and the `SMTP_*` settings. To try SMTP locally, a catch-all server such as [Mailpit](https://mailpit.axllent.org/) works: `SMTP_HOST = "127.0.0.1"`, `SMTP_PORT = 1025`, `SMTP_SECURITY = "none"`.
 
 ## Rate limiting
@@ -116,7 +120,7 @@ Sign-in, registration, password and email changes, account deletion and the rout
 | Wrong current passwords in a row, per account, counted together for password changes, email changes and account deletion (a correct one resets it) | 5 per 15 minutes |
 
 - Change them in the optional `[rate_limits]` section of `config.toml` (see `config_template.toml`).
-- Counters live in memory, per process. With several workers, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.
+- Counters live in memory, per process. With several workers or replicas, set `STORAGE_URI = "redis://..."` (and `uv add redis`) so they share them.
 - Behind a reverse proxy, uvicorn must trust it to see the real client IPs. By default it trusts `127.0.0.1` and `::1`; for a proxy elsewhere, set `FORWARDED_ALLOW_IPS` to its address (the Docker Compose template already does, see [Docker](#docker)). Don't trust every address if the app can be reached directly: clients could fake their IP with `X-Forwarded-For`.
 
 ## Security headers
