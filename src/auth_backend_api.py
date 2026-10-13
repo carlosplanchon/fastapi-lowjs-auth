@@ -49,6 +49,7 @@ from models import AccessToken, User
 from origin_check import OriginCheckMiddleware
 from security_headers import SecurityHeadersMiddleware
 from sessions import (
+    SESSION_COOKIE_NAME,
     SESSION_LIFETIME_SECONDS,
     HashedDatabaseStrategy,
     PasswordBoundJWTStrategy,
@@ -311,7 +312,7 @@ UserManagerDep = Annotated[UserManager, Depends(get_user_manager)]
 # Browsers: an HttpOnly session cookie (JavaScript can't read it) backed by a row
 # in the database, so signing out really ends the session.
 cookie_transport = CookieTransport(
-    cookie_name="session",
+    cookie_name=SESSION_COOKIE_NAME,
     cookie_max_age=SESSION_LIFETIME_SECONDS,
     cookie_path=root_prefix or "/",
     cookie_secure=APP_PUBLIC_URL.startswith("https://"),
@@ -371,8 +372,9 @@ google_sso = GoogleSSO(
     redirect_uri=GOOGLE_REDIRECT_URI
 )
 
-# Cookie holding the OAuth "state", only sent back to the callback URL.
-GOOGLE_STATE_COOKIE = "google_oauth_state"
+# Cookie holding the OAuth "state", only sent back to the callback URL. A name of
+# its own, like the session cookie's (see SESSION_COOKIE_NAME).
+GOOGLE_STATE_COOKIE = "lowjs_google_state"
 google_state_cookie_options = {
     "path": urlsplit(GOOGLE_REDIRECT_URI).path or "/",
     "secure": GOOGLE_REDIRECT_URI.startswith("https://"),

@@ -59,6 +59,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 ## Sessions
 
 - Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
+- The cookie is called `lowjs_session` (`SESSION_COOKIE_NAME` in `src/sessions.py`) rather than `session`, a common default. Under `ROOT_PATH` the browser also sends the cookies of an app at the domain's root, after this app's own, and only the last cookie of each name is read. Two copies of this app on one domain, one under the other's path, need different names.
 - Each session is a row in the database that stores only a hash of the cookie's token.
   - Signing out ends it for real. Resetting the password, or Google taking over an unverified account, ends every session of the account.
   - Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).

@@ -3,6 +3,7 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy import select, update
 
 from models import AccessToken, User
+from sessions import SESSION_COOKIE_NAME
 
 
 def register(client, prefix, email="ana@example.com", password="long-secret"):
@@ -44,22 +45,22 @@ def test_deleting_the_account(client, prefix, app_module, sent_emails):
     run_in_app(client, app_module, update(User).values(is_verified=True))
     token = bearer_token(client, prefix)
     sign_in(client, prefix)
-    cookie = client.cookies["session"]
+    cookie = client.cookies[SESSION_COOKIE_NAME]
     sent_emails.clear()
 
     response = delete_account(client, prefix)
     assert response.status_code == 204
     set_cookie = response.headers["set-cookie"].lower()
-    assert set_cookie.startswith("session=")
+    assert set_cookie.startswith(f"{SESSION_COOKIE_NAME}=")
     assert "max-age=0" in set_cookie
     assert f"path={prefix or '/'}" in set_cookie
-    assert "session" not in client.cookies
+    assert SESSION_COOKIE_NAME not in client.cookies
 
     # Nothing left: no sessions, no user...
     assert session_tokens(client, app_module) == []
     assert run_in_app(client, app_module, select(User.email)).scalars().all() == []
     # ...so the old cookie, an earlier Bearer token and the password stop working.
-    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={cookie}"}).status_code == 401
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={cookie}"}).status_code == 401
     assert client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
     assert sign_in(client, prefix).status_code == 400
 

@@ -14,6 +14,12 @@ from sqlalchemy import delete
 # changing the password end it earlier.
 SESSION_LIFETIME_SECONDS = 14 * 24 * 3600
 
+# Not just "session", a common default (Starlette's SessionMiddleware uses it).
+# Under ROOT_PATH the browser also sends the cookies of an app at the domain's
+# root, after this one's, and Starlette keeps the last cookie of each name.
+# A second copy of this app under this one's path needs another name.
+SESSION_COOKIE_NAME = "lowjs_session"
+
 
 def session_expiry_cutoff(lifetime_seconds: int = SESSION_LIFETIME_SECONDS) -> datetime:
     """Sessions created before this have expired: fastapi-users reads with the same cutoff."""

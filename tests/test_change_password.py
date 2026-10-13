@@ -1,3 +1,6 @@
+from sessions import SESSION_COOKIE_NAME
+
+
 def register(client, prefix, email="ana@example.com", password="long-secret"):
     response = client.post(f"{prefix}/auth/register", json={"email": email, "password": password})
     assert response.status_code == 201
@@ -71,7 +74,7 @@ def test_cross_site_requests_are_rejected(client, prefix):
 def test_api_clients_change_it_with_their_bearer_token(client, prefix):
     register(client, prefix)
     sign_in(client, prefix)
-    browser_cookie = client.cookies["session"]
+    browser_cookie = client.cookies[SESSION_COOKIE_NAME]
     client.cookies.clear()
 
     token = bearer_token(client, prefix)
@@ -80,7 +83,7 @@ def test_api_clients_change_it_with_their_bearer_token(client, prefix):
     # No browser session for an API client...
     assert "set-cookie" not in response.headers
     # ...the browser's one ended with the change, and so did the token itself.
-    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={browser_cookie}"}).status_code == 401
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={browser_cookie}"}).status_code == 401
     assert client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
@@ -89,12 +92,12 @@ def test_a_dead_session_cookie_does_not_get_renewed(client, prefix):
     # (e.g. Swagger's "Authorize") isn't signed in with the cookie.
     register(client, prefix)
     sign_in(client, prefix)
-    dead_cookie = client.cookies["session"]
+    dead_cookie = client.cookies[SESSION_COOKIE_NAME]
     assert client.post(f"{prefix}/auth/cookie/logout").status_code == 204
 
     response = change_password(client, prefix, headers={
         "Authorization": f"Bearer {bearer_token(client, prefix)}",
-        "Cookie": f"session={dead_cookie}",
+        "Cookie": f"{SESSION_COOKIE_NAME}={dead_cookie}",
     })
     assert response.status_code == 204
     assert "set-cookie" not in response.headers

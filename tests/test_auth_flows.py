@@ -5,6 +5,8 @@ import pytest
 from fastapi_sso.sso.base import OpenID, SSOLoginError
 from fastapi_users.db import SQLAlchemyUserDatabase
 
+from sessions import SESSION_COOKIE_NAME
+
 
 def fake_google_account(monkeypatch, app_module, email):
     async def get_discovery_document():
@@ -35,9 +37,9 @@ def google_login(client, prefix):
     assert response.status_code == 307
     # Back to the sign-in page with the session in a cookie, not in the URL.
     assert response.headers["location"] == f"{prefix}/login"
-    assert "session" in client.cookies
+    assert SESSION_COOKIE_NAME in client.cookies
     # The state is single use.
-    assert "google_oauth_state" not in client.cookies
+    assert "lowjs_google_state" not in client.cookies
 
 
 def bearer(token):
@@ -153,7 +155,7 @@ def register_first(client, prefix):
         data={"username": "ana@gmail.com", "password": "long-secret"},
     )
     assert response.status_code == 204
-    cookie = client.cookies["session"]
+    cookie = client.cookies[SESSION_COOKIE_NAME]
     client.cookies.clear()
     return cookie
 
@@ -181,7 +183,7 @@ def test_google_login_takes_over_unverified_account(client, prefix, app_module, 
     response = client.get(f"{prefix}/me", headers={"Authorization": f"Bearer {squatter_token}", "Cookie": ""})
     assert response.status_code == 401
     # ...nor the squatter's browser session.
-    response = client.get(f"{prefix}/me", headers={"Cookie": f"session={squatter_cookie}"})
+    response = client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={squatter_cookie}"})
     assert response.status_code == 401
 
 
@@ -209,7 +211,7 @@ def test_a_failed_google_takeover_changes_nothing(client, prefix, app_module, mo
     )
     assert response.status_code == 200
     assert get_user(client, prefix, response.json()["access_token"]).json()["is_verified"] is False
-    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={squatter_cookie}"}).status_code == 200
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={squatter_cookie}"}).status_code == 200
 
 
 def test_google_login_keeps_the_password_of_a_verified_account(
@@ -242,7 +244,7 @@ def google_callback(client, prefix, **params):
 def assert_back_to_login_with_error(client, prefix, response, error):
     assert response.status_code == 307
     assert response.headers["location"] == f"{prefix}/login#error={error}"
-    assert "google_oauth_state" not in client.cookies
+    assert "lowjs_google_state" not in client.cookies
 
 
 def test_google_callback_rejects_bad_state(client, prefix, app_module, monkeypatch):
@@ -293,6 +295,7 @@ def test_google_state_cookie_is_httponly_and_scoped(client, prefix, app_module, 
 
     response = client.get(f"{prefix}/auth/google/login", follow_redirects=False)
     cookie = response.headers["set-cookie"].lower()
+    assert cookie.startswith("lowjs_google_state=")
     assert "httponly" in cookie
     assert "samesite=lax" in cookie
     assert f"path={prefix}/auth/google/callback" in cookie

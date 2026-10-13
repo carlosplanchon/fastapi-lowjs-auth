@@ -6,7 +6,7 @@ from fastapi_users.jwt import generate_jwt
 from sqlalchemy import select, update
 
 from models import AccessToken
-from sessions import SESSION_LIFETIME_SECONDS, hash_token
+from sessions import SESSION_COOKIE_NAME, SESSION_LIFETIME_SECONDS, hash_token
 
 
 def register(client, prefix, email="ana@example.com", password="long-secret"):
@@ -50,7 +50,7 @@ def test_sign_in_sets_an_httponly_session_cookie(client, prefix):
     assert response.status_code == 204
 
     cookie = response.headers["set-cookie"].lower()
-    assert cookie.startswith("session=")
+    assert cookie.startswith(f"{SESSION_COOKIE_NAME}=")
     for attribute in ("httponly", "samesite=lax", "secure", f"path={prefix or '/'}",
                       f"max-age={SESSION_LIFETIME_SECONDS}"):
         assert attribute in cookie
@@ -58,10 +58,24 @@ def test_sign_in_sets_an_httponly_session_cookie(client, prefix):
     assert client.get(f"{prefix}/me").status_code == 200
 
 
+def test_a_session_cookie_from_another_app_doesnt_get_in_the_way(client, prefix):
+    # Another app at the domain's root with a cookie called "session". The browser
+    # sends it here too, after this app's own (longer paths go first), and
+    # Starlette keeps the last cookie of each name.
+    register(client, prefix)
+    sign_in(client, prefix)
+    [ours] = [cookie for cookie in client.cookies.jar if cookie.name == SESSION_COOKIE_NAME]
+    client.cookies.set("session", "another-app", domain=ours.domain, path="/")
+
+    response = client.get(f"{prefix}/me")
+    assert "session=another-app" in response.request.headers["cookie"]
+    assert response.status_code == 200
+
+
 def test_the_database_keeps_only_a_hash_of_the_session_token(client, prefix, app_module):
     register(client, prefix)
     sign_in(client, prefix)
-    token = client.cookies["session"]
+    token = client.cookies[SESSION_COOKIE_NAME]
 
     stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
     assert stored == [hash_token(token)]
@@ -71,13 +85,13 @@ def test_the_database_keeps_only_a_hash_of_the_session_token(client, prefix, app
 def test_signing_out_ends_the_session(client, prefix):
     register(client, prefix)
     sign_in(client, prefix)
-    token = client.cookies["session"]
+    token = client.cookies[SESSION_COOKIE_NAME]
 
     response = client.post(f"{prefix}/auth/cookie/logout")
     assert response.status_code == 204
-    assert "session" not in client.cookies
+    assert SESSION_COOKIE_NAME not in client.cookies
     # A copy of the old cookie doesn't work anymore either.
-    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={token}"}).status_code == 401
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={token}"}).status_code == 401
 
 
 def test_resetting_the_password_ends_every_session(client, prefix, sent_emails):
@@ -96,10 +110,10 @@ def test_resetting_the_password_ends_every_session(client, prefix, sent_emails):
 def test_changing_the_password_ends_the_other_sessions_and_renews_this_one(client, prefix, app_module):
     register(client, prefix)
     sign_in(client, prefix)
-    other = client.cookies["session"]  # another device
+    other = client.cookies[SESSION_COOKIE_NAME]  # another device
     client.cookies.clear()
     sign_in(client, prefix)
-    this = client.cookies["session"]
+    this = client.cookies[SESSION_COOKIE_NAME]
 
     response = client.post(
         f"{prefix}/auth/change-password",
@@ -111,11 +125,11 @@ def test_changing_the_password_ends_the_other_sessions_and_renews_this_one(clien
         assert attribute in cookie
 
     # This browser carries on with a new session; the old ones are over.
-    new = client.cookies["session"]
+    new = client.cookies[SESSION_COOKIE_NAME]
     assert new not in (this, other)
     assert client.get(f"{prefix}/me").status_code == 200
     for old in (this, other):
-        assert client.get(f"{prefix}/me", headers={"Cookie": f"session={old}"}).status_code == 401
+        assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={old}"}).status_code == 401
     stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
     assert stored == [hash_token(new)]
 
@@ -123,21 +137,21 @@ def test_changing_the_password_ends_the_other_sessions_and_renews_this_one(clien
 def test_signing_out_other_devices_ends_them_and_renews_this_session(client, prefix, app_module):
     register(client, prefix)
     sign_in(client, prefix)
-    other = client.cookies["session"]  # another device
+    other = client.cookies[SESSION_COOKIE_NAME]  # another device
     client.cookies.clear()
     sign_in(client, prefix)
-    this = client.cookies["session"]
+    this = client.cookies[SESSION_COOKIE_NAME]
 
     response = client.post(f"{prefix}/auth/cookie/logout-others")
     assert response.status_code == 204
     assert "httponly" in response.headers["set-cookie"].lower()
 
-    new = client.cookies["session"]
+    new = client.cookies[SESSION_COOKIE_NAME]
     assert new not in (this, other)
     assert client.get(f"{prefix}/me").status_code == 200
     # The other device is out, and so is any copy of this browser's old cookie.
     for old in (this, other):
-        assert client.get(f"{prefix}/me", headers={"Cookie": f"session={old}"}).status_code == 401
+        assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={old}"}).status_code == 401
     stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
     assert stored == [hash_token(new)]
     # The password stays the same.
@@ -158,7 +172,7 @@ def test_signing_out_other_devices_needs_a_session_from_this_site(client, prefix
 def test_api_clients_can_sign_out_every_browser(client, prefix):
     register(client, prefix)
     sign_in(client, prefix)
-    browser_cookie = client.cookies["session"]
+    browser_cookie = client.cookies[SESSION_COOKIE_NAME]
     client.cookies.clear()
     response = client.post(
         f"{prefix}/auth/jwt/login",
@@ -169,7 +183,7 @@ def test_api_clients_can_sign_out_every_browser(client, prefix):
     response = client.post(f"{prefix}/auth/cookie/logout-others", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 204
     assert "set-cookie" not in response.headers
-    assert client.get(f"{prefix}/me", headers={"Cookie": f"session={browser_cookie}"}).status_code == 401
+    assert client.get(f"{prefix}/me", headers={"Cookie": f"{SESSION_COOKIE_NAME}={browser_cookie}"}).status_code == 401
     # The password didn't change, so the token still works.
     assert me_with_bearer(client, prefix, token).status_code == 200
 
@@ -209,7 +223,7 @@ def test_signing_in_deletes_that_users_expired_sessions(client, prefix, app_modu
     sign_in(client, prefix)
     client.cookies.clear()
     client.post(f"{prefix}/auth/cookie/login", data={"username": "bob@example.com", "password": "long-secret"})
-    bob = client.cookies["session"]
+    bob = client.cookies[SESSION_COOKIE_NAME]
     client.cookies.clear()
     too_old = datetime.now(UTC) - timedelta(seconds=SESSION_LIFETIME_SECONDS + 60)
     run_in_app(client, app_module, update(AccessToken).values(created_at=too_old))
@@ -217,7 +231,7 @@ def test_signing_in_deletes_that_users_expired_sessions(client, prefix, app_modu
     sign_in(client, prefix)
     # Ana's expired session is gone; Bob's waits for Bob, or for the next start.
     stored = run_in_app(client, app_module, select(AccessToken.token)).scalars().all()
-    assert set(stored) == {hash_token(client.cookies["session"]), hash_token(bob)}
+    assert set(stored) == {hash_token(client.cookies[SESSION_COOKIE_NAME]), hash_token(bob)}
 
 
 def test_starting_the_app_deletes_every_expired_session(make_app):
@@ -225,10 +239,10 @@ def test_starting_the_app_deletes_every_expired_session(make_app):
     with TestClient(app_module.app, base_url="https://testserver") as client:
         register(client, "")
         sign_in(client, "")
-        expired = client.cookies["session"]
+        expired = client.cookies[SESSION_COOKIE_NAME]
         client.cookies.clear()
         sign_in(client, "")
-        current = client.cookies["session"]
+        current = client.cookies[SESSION_COOKIE_NAME]
         too_old = datetime.now(UTC) - timedelta(seconds=SESSION_LIFETIME_SECONDS + 60)
         run_in_app(
             client, app_module,
