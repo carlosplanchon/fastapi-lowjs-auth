@@ -13,6 +13,10 @@ from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"
+SRC = (Path(__file__).parent.parent / "src").resolve()
+# The app's modules that don't read the config. Tests import from them directly,
+# so they stay the same objects: the models' classes, for one.
+CONFIG_FREE_MODULES = {"models", "sessions", "origin_check", "security_headers"}
 
 # The tests run on SQLite. With a Postgres URL here, like
 # postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres, they run on
@@ -66,9 +70,11 @@ def load_shared(tmp_path, monkeypatch):
         monkeypatch.setenv("CONFIG_PATH", str(config))
 
         # The app reads its config at import time (and keeps rate limit counters
-        # in memory), so import it fresh each time.
-        for name in ("shared", "mailer", "rate_limits", "auth_backend_api"):
-            sys.modules.pop(name, None)
+        # in memory), so import its modules fresh each time.
+        for name, module in list(sys.modules.items()):
+            path = getattr(module, "__file__", None)
+            if path and Path(path).resolve().parent == SRC and name not in CONFIG_FREE_MODULES:
+                del sys.modules[name]
         return importlib.import_module("shared")
 
     return load
@@ -132,12 +138,12 @@ def client(app_module):
 
 @pytest.fixture
 def prefix(app_module):
-    return app_module.root_prefix
+    return app_module.ROOT_PREFIX
 
 
 @pytest.fixture
 def sent_emails(app_module, monkeypatch):
     """Emails the app sends during the test, as (to, subject, body) tuples."""
     emails = []
-    monkeypatch.setattr(app_module.mailer, "send_email", lambda *email: emails.append(email))
+    monkeypatch.setattr(app_module.users.mailer, "send_email", lambda *email: emails.append(email))
     return emails

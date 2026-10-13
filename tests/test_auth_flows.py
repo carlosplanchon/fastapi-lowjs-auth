@@ -15,8 +15,8 @@ def fake_google_account(monkeypatch, app_module, email):
     async def verify_and_process(request, **kwargs):
         return OpenID(email=email, provider="google", id="google-account-id")
 
-    monkeypatch.setattr(app_module.google_sso, "get_discovery_document", get_discovery_document)
-    monkeypatch.setattr(app_module.google_sso, "verify_and_process", verify_and_process)
+    monkeypatch.setattr(app_module.google_sign_in.google_sso, "get_discovery_document", get_discovery_document)
+    monkeypatch.setattr(app_module.google_sign_in.google_sso, "verify_and_process", verify_and_process)
 
 
 def start_google_login(client, prefix):
@@ -195,7 +195,7 @@ def test_a_failed_google_takeover_changes_nothing(client, prefix, app_module, mo
         raise RuntimeError("database down")
 
     if failing_step == "sessions":
-        monkeypatch.setattr(app_module.UserManager, "delete_sessions", fail)
+        monkeypatch.setattr(app_module.users.UserManager, "delete_sessions", fail)
     else:
         monkeypatch.setattr(SQLAlchemyUserDatabase, "update", fail)
     fake_google_account(monkeypatch, app_module, "ana@gmail.com")
@@ -254,7 +254,7 @@ def test_google_callback_rejects_bad_state(client, prefix, app_module, monkeypat
         exchanged_codes.append(request.query_params["code"])
 
     fake_google_account(monkeypatch, app_module, "new@gmail.com")
-    monkeypatch.setattr(app_module.google_sso, "verify_and_process", verify_and_process)
+    monkeypatch.setattr(app_module.google_sign_in.google_sso, "verify_and_process", verify_and_process)
 
     # No state cookie: a login this browser never started (login CSRF).
     response = google_callback(client, prefix, code="test", state="forged")
@@ -284,7 +284,7 @@ def test_google_callback_when_google_fails(client, prefix, app_module, monkeypat
         async def verify_and_process(request, failure=failure, **kwargs):
             raise failure
 
-        monkeypatch.setattr(app_module.google_sso, "verify_and_process", verify_and_process)
+        monkeypatch.setattr(app_module.google_sign_in.google_sso, "verify_and_process", verify_and_process)
         state = start_google_login(client, prefix)
         response = google_callback(client, prefix, code="test", state=state)
         assert_back_to_login_with_error(client, prefix, response, "GOOGLE_FAILED")

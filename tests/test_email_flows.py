@@ -83,7 +83,7 @@ def test_email_failures_happen_after_the_response(app_module, prefix, monkeypatc
     def send_email(*email):
         raise ConnectionRefusedError("SMTP server is down")
 
-    monkeypatch.setattr(app_module.mailer, "send_email", send_email)
+    monkeypatch.setattr(app_module.users.mailer, "send_email", send_email)
     # Emails go out in background tasks: if sending fails, the answer is still the
     # same one an unknown email gets, so it can't reveal which accounts exist.
     with TestClient(app_module.app, raise_server_exceptions=False) as client:

@@ -30,6 +30,21 @@ You need [uv](https://docs.astral.sh/uv/), Docker with Compose, and tmux.
 
 To run it all in Docker instead, see [Docker](#docker). Signing in with Google also needs an OAuth client, see [Google sign-in](#google-sign-in).
 
+## Code layout
+
+The app lives in `src/`:
+
+- `auth_backend_api.py`: the app itself: middleware, static files, fastapi-users' routes and the sign-in page. `main_api.py` runs it with uvicorn.
+- `users.py`: the user manager, which hooks into fastapi-users (password rules, what happens after signing up, a reset or a deletion), and the emails it sends.
+- `authentication.py`: how requests sign in (the session cookie, Bearer JWTs) and the dependencies that give routes the current user, like `CurrentUser`.
+- `account.py`: the account page's routes: password, email, other devices and deletion.
+- `google_sign_in.py`: signing in with Google.
+- `sessions.py`: sessions stored as hashes, and JWTs tied to the password.
+- `database.py`, `models.py` and `migrations/`: the database connection, the tables and their migrations.
+- `rate_limits.py`, `origin_check.py`, `security_headers.py` and `mailer.py`: rate limiting, the cross-site check, the security headers and sending emails.
+- `shared.py`: reads `config.toml`.
+- `web/`: the page's template, its static files and the Tailwind source.
+
 ## Docker
 
 The `Dockerfile` builds an image with the API. It has the locked dependencies without the dev group and runs as an unprivileged user (UID 1000). On start it brings the database up to date (`alembic upgrade head`) and then serves on port 8000. Your `config.toml` isn't in the image: it's mounted when the container starts (`CONFIG_PATH`).

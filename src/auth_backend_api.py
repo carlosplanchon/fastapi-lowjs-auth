@@ -1,394 +1,30 @@
-import logging
-import secrets
-import uuid
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
-from urllib.parse import urlsplit
 
-import jwt
-from fastapi import (
-    BackgroundTasks,
-    Depends,
-    FastAPI,
-    HTTPException,
-    Request,
-    Response,
-    status,
-)
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi_sso.sso.google import GoogleSSO
-from fastapi_users import (
-    BaseUserManager,
-    FastAPIUsers,
-    InvalidPasswordException,
-    UUIDIDMixin,
-    exceptions,
-    schemas,
-)
-from fastapi_users.authentication import (
-    AuthenticationBackend,
-    BearerTransport,
-    CookieTransport,
-)
-from fastapi_users.db import SQLAlchemyUserDatabase
-from fastapi_users.jwt import decode_jwt, generate_jwt
-from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
-from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
-import mailer
+import account
+import database
+import google_sign_in
 import rate_limits
-from models import AccessToken, User
+import users
+from authentication import CurrentUser, cookie_backend, fastapi_users, jwt_backend
+from models import AccessToken
 from origin_check import OriginCheckMiddleware
 from security_headers import SecurityHeadersMiddleware
-from sessions import (
-    SESSION_COOKIE_NAME,
-    SESSION_LIFETIME_SECONDS,
-    HashedDatabaseStrategy,
-    PasswordBoundJWTStrategy,
-    password_fingerprint,
-    session_expiry_cutoff,
-)
-from shared import (
-    APP_PUBLIC_URL,
-    APP_ROOT_PATH,
-    DB_URL,
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT_URI,
-    JWT_SIGNING_SECRET_KEY,
-)
+from sessions import session_expiry_cutoff
+from shared import APP_PUBLIC_URL, APP_ROOT_PATH, ROOT_PREFIX
 
-if APP_ROOT_PATH != "":
-    root_prefix = f"/{APP_ROOT_PATH}"
-else:
-    root_prefix = ""
-
-
-# --> CONFIG TEMPLATES:
 templates = Jinja2Templates(directory=Path(__file__).parent / "web" / "templates")
 
 
-# --> DB SETUP:
-# The tables come from the Alembic migrations (src/migrations): uv run alembic upgrade head
-engine = create_async_engine(DB_URL, future=True)
-async_session_maker = sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
-
-
-async def get_async_session() -> AsyncGenerator[AsyncSession]:
-    async with async_session_maker() as session:
-        yield session
-
-
-# One per request: everything that depends on it shares the same session.
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-
-
-async def get_user_db(session: AsyncSessionDep):
-    yield SQLAlchemyUserDatabase(session, User)
-
-
-async def get_access_token_db(session: AsyncSessionDep):
-    yield SQLAlchemyAccessTokenDatabase(session, AccessToken)
-
-
-# --> MANAGER:
-MIN_PASSWORD_LENGTH = 8
-
-
-# Built from the configured public URL, never from the request's Host header: a
-# forged Host would make the links in emails point to an attacker's site.
-LOGIN_URL = f"{APP_PUBLIC_URL}{root_prefix}/login"
-
-
-def email_link(name: str, token: str) -> str:
-    return f"{LOGIN_URL}#{name}={token}"
-
-
-# Changing the email takes two links: one to the current address to approve the
-# change, then one to the new address to confirm it.
-APPROVE_EMAIL_AUDIENCE = "fastapi-lowjs-auth:approve-email"
-CONFIRM_EMAIL_AUDIENCE = "fastapi-lowjs-auth:confirm-email"
-EMAIL_CHANGE_LINK_LIFETIME_SECONDS = 3600
-
-
-def email_change_token(audience: str, user: User, new_email: str) -> str:
-    # Bound to the current email and password: the change happens at most once, and
-    # changing or resetting the password cancels it. (After A→B and then B→A, an
-    # unexpired A→B link would work again: that takes B's mailbox, within the hour.)
-    data = {
-        "sub": str(user.id),
-        "old": user.email,
-        "new": new_email,
-        "pwd": password_fingerprint(JWT_SIGNING_SECRET_KEY, user.hashed_password),
-        "aud": audience,
-    }
-    return generate_jwt(data, JWT_SIGNING_SECRET_KEY, EMAIL_CHANGE_LINK_LIFETIME_SECONDS)
-
-
-class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
-    reset_password_token_secret = JWT_SIGNING_SECRET_KEY
-    verification_token_secret = JWT_SIGNING_SECRET_KEY
-
-    def __init__(self, user_db: SQLAlchemyUserDatabase, background_tasks: BackgroundTasks):
-        super().__init__(user_db)
-        # Emails go out after the response: requests don't wait for SMTP, and
-        # forgot-password takes as long for unknown emails as for known ones.
-        self.background_tasks = background_tasks
-
-    async def validate_password(self, password: str, user: "UserCreate | User") -> None:
-        if len(password) < MIN_PASSWORD_LENGTH:
-            raise InvalidPasswordException(
-                reason=f"Password should be at least {MIN_PASSWORD_LENGTH} characters"
-            )
-
-    async def on_after_register(self, user: User, request: Request | None = None) -> None:
-        if not user.is_verified:
-            await self.request_verify(user, request)
-
-    async def on_after_request_verify(self, user: User, token: str, request: Request | None = None) -> None:
-        self.background_tasks.add_task(
-            mailer.send_email,
-            user.email,
-            "Verify your email",
-            "Confirm your email address by opening this link:\n\n"
-            f"{email_link('verify_token', token)}\n\n"
-            f"The link expires in {self.verification_token_lifetime_seconds // 60} minutes. "
-            "If you didn't sign up, ignore this email: someone else used your address, "
-            "and confirming it would verify their account.\n",
-        )
-
-    async def on_after_forgot_password(self, user: User, token: str, request: Request | None = None) -> None:
-        self.background_tasks.add_task(
-            mailer.send_email,
-            user.email,
-            "Reset your password",
-            "Choose a new password by opening this link:\n\n"
-            f"{email_link('reset_token', token)}\n\n"
-            f"The link expires in {self.reset_password_token_lifetime_seconds // 60} minutes. "
-            "If you didn't ask to reset your password, you can ignore this email.\n",
-        )
-
-    async def on_after_reset_password(self, user: User, request: Request | None = None) -> None:
-        # The reset link was sent to the account's email, so using it proves the
-        # user owns the address.
-        if not user.is_verified:
-            await self.user_db.update(user, {"is_verified": True})
-        # Whoever knew the old password may have a session: end them all.
-        await self.end_all_sessions(user)
-        self.send_password_changed_email(user)
-
-    async def on_after_update(self, user: User, update_dict: dict, request: Request | None = None) -> None:
-        if "password" in update_dict:
-            await self.end_all_sessions(user)
-            self.send_password_changed_email(user)
-
-    def send_password_changed_email(self, user: User) -> None:
-        # The owner hears about every change. If it wasn't them, a reset link gives
-        # them the account back: it goes to this same address, which only changes with
-        # its own approval.
-        self.background_tasks.add_task(
-            mailer.send_email,
-            user.email,
-            "Your password was changed",
-            "The password of your account was just changed.\n\n"
-            "If it was you, you can ignore this email. If it wasn't, someone else may have "
-            "access to your account: choose a new password right away with "
-            "\"Forgot your password?\" on the sign-in page.\n\n"
-            f"{LOGIN_URL}\n",
-        )
-
-    async def end_all_sessions(self, user: User) -> None:
-        # Browser sessions only. Bearer JWTs stop working by themselves when the
-        # password changes (PasswordBoundJWTStrategy), and otherwise expire within the hour.
-        await self.delete_sessions(user)
-        await self.user_db.session.commit()
-
-    async def delete_sessions(self, user: User) -> None:
-        # Without committing: for callers that commit it together with their own change.
-        await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
-
-    async def on_before_delete(self, user: User, request: Request | None = None) -> None:
-        # The database would cascade too, but SQLite only does with foreign keys on.
-        # No commit: user_db.delete() commits it with the user's row, so a delete that
-        # fails changes nothing.
-        await self.delete_sessions(user)
-
-    async def on_after_delete(self, user: User, request: Request | None = None) -> None:
-        # Verified addresses only: signing up someone else's address and deleting the
-        # account over and over would otherwise flood it. Also runs when a superuser
-        # deletes an account (DELETE /users/{id}), hence the neutral wording.
-        if not user.is_verified:
-            return
-        self.background_tasks.add_task(
-            mailer.send_email,
-            user.email,
-            "Your account was deleted",
-            "Your account and its data were deleted, and every device signed in to it "
-            "was signed out. This can't be undone.\n\n"
-            f"You can sign up again with this email at any time:\n\n{LOGIN_URL}\n",
-        )
-
-    async def email_change_from_link(self, token: str, audience: str) -> tuple[User, str] | None:
-        """The user and their new email, if the link is valid and still applies."""
-        try:
-            claims = decode_jwt(token, JWT_SIGNING_SECRET_KEY, [audience])
-            user = await self.get(self.parse_id(str(claims.get("sub", ""))))
-        except (jwt.PyJWTError, exceptions.InvalidID, exceptions.UserNotExists):
-            return None
-        fingerprint = password_fingerprint(JWT_SIGNING_SECRET_KEY, user.hashed_password)
-        if (
-            not user.is_active
-            or user.email != claims.get("old")
-            or not secrets.compare_digest(str(claims.get("pwd", "")), fingerprint)
-        ):
-            return None
-        return user, str(claims.get("new", ""))
-
-    def send_email_change_approval(self, user: User, new_email: str) -> None:
-        # To the current address: only its owner can move the account elsewhere.
-        token = email_change_token(APPROVE_EMAIL_AUDIENCE, user, new_email)
-        self.background_tasks.add_task(
-            mailer.send_email,
-            user.email,
-            "Approve your new email",
-            f"Someone asked to change the email of your account to {new_email}.\n\n"
-            "If it was you, open this link to approve it. We'll then email the new "
-            "address a link to confirm it:\n\n"
-            f"{email_link('approve_email_token', token)}\n\n"
-            f"The link expires in {EMAIL_CHANGE_LINK_LIFETIME_SECONDS // 60} minutes. "
-            "If it wasn't you, don't approve it, and change your password: someone else knows it.\n",
-        )
-
-    def send_email_change_confirmation(self, user: User, new_email: str) -> None:
-        # Nothing about the account's current address: the requester picks who gets this.
-        token = email_change_token(CONFIRM_EMAIL_AUDIENCE, user, new_email)
-        self.background_tasks.add_task(
-            mailer.send_email,
-            new_email,
-            "Confirm your new email",
-            "Open this link to make this the email of your account:\n\n"
-            f"{email_link('confirm_email_token', token)}\n\n"
-            f"The link expires in {EMAIL_CHANGE_LINK_LIFETIME_SECONDS // 60} minutes. "
-            "If you didn't ask for this, ignore this email: confirming would make your "
-            "address the email of someone else's account.\n",
-        )
-
-    def send_email_changed_notice(self, old_email: str, new_email: str) -> None:
-        self.background_tasks.add_task(
-            mailer.send_email,
-            old_email,
-            "Your email was changed",
-            f"The email of your account is now {new_email}: sign in with it from now on.\n",
-        )
-
-    async def on_after_login(self, user: User, request: Request | None = None, response=None) -> None:
-        if request is not None:
-            await rate_limits.login_succeeded(request, user.email)
-
-
-# --> USER MANAGER FACTORY:
-async def get_user_manager(
-    background_tasks: BackgroundTasks,
-    user_db: Annotated[SQLAlchemyUserDatabase, Depends(get_user_db)],
-):
-    yield UserManager(user_db, background_tasks)
-
-
-UserManagerDep = Annotated[UserManager, Depends(get_user_manager)]
-
-# --> AUTHENTICATION:
-# Browsers: an HttpOnly session cookie (JavaScript can't read it) backed by a row
-# in the database, so signing out really ends the session.
-cookie_transport = CookieTransport(
-    cookie_name=SESSION_COOKIE_NAME,
-    cookie_max_age=SESSION_LIFETIME_SECONDS,
-    cookie_path=root_prefix or "/",
-    cookie_secure=APP_PUBLIC_URL.startswith("https://"),
-    cookie_httponly=True,
-    cookie_samesite="lax",
-)
-
-
-def get_database_strategy(
-    access_token_db: Annotated[SQLAlchemyAccessTokenDatabase, Depends(get_access_token_db)],
-) -> HashedDatabaseStrategy:
-    return HashedDatabaseStrategy(access_token_db, lifetime_seconds=SESSION_LIFETIME_SECONDS)
-
-
-SessionStrategyDep = Annotated[HashedDatabaseStrategy, Depends(get_database_strategy)]
-
-
-cookie_backend = AuthenticationBackend(
-    name="cookie",
-    transport=cookie_transport,
-    get_strategy=get_database_strategy
-)
-
-# API clients (scripts, mobile apps, Swagger's "Authorize"): Bearer JWTs. They stop
-# working when the password changes, but can't be revoked otherwise (signing out
-# doesn't end them), so they're short-lived.
-# Relative, so Swagger's "Authorize" also works when served under ROOT_PATH.
-bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
-
-
-def get_jwt_strategy() -> PasswordBoundJWTStrategy:
-    return PasswordBoundJWTStrategy(secret=JWT_SIGNING_SECRET_KEY, lifetime_seconds=3600)
-
-
-jwt_backend = AuthenticationBackend(
-    name="jwt",
-    transport=bearer_transport,
-    get_strategy=get_jwt_strategy
-)
-
-# --> FASTAPI USERS:
-fastapi_users = FastAPIUsers[User, uuid.UUID](
-    get_user_manager,
-    [cookie_backend, jwt_backend],
-)
-
-current_active_user = fastapi_users.current_user(active=True)
-CurrentUser = Annotated[User, Depends(current_active_user)]
-# The user and the token they signed in with: tells the session cookie from a Bearer JWT.
-current_active_user_and_token = fastapi_users.authenticator.current_user_token(active=True)
-CurrentUserAndToken = Annotated[tuple[User, str], Depends(current_active_user_and_token)]
-
-# --> GOOGLE SSO:
-google_sso = GoogleSSO(
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    redirect_uri=GOOGLE_REDIRECT_URI
-)
-
-# Cookie holding the OAuth "state", only sent back to the callback URL. A name of
-# its own, like the session cookie's (see SESSION_COOKIE_NAME).
-GOOGLE_STATE_COOKIE = "lowjs_google_state"
-google_state_cookie_options = {
-    "path": urlsplit(GOOGLE_REDIRECT_URI).path or "/",
-    "secure": GOOGLE_REDIRECT_URI.startswith("https://"),
-    "httponly": True,
-    # "lax" still sends it on the top-level redirect back from Google.
-    "samesite": "lax",
-}
-
-# --> APP SETUP:
-# app = FastAPI()
-
 async def delete_expired_sessions() -> None:
     """Every expired session, whoever's: sign-ins only sweep their own user's."""
-    async with async_session_maker() as session:
+    async with database.async_session_maker() as session:
         await session.execute(delete(AccessToken).where(AccessToken.created_at < session_expiry_cutoff()))
         await session.commit()
 
@@ -398,14 +34,15 @@ async def lifespan(app: FastAPI):
     # On every start, and so on every deploy: catches the users who never sign in again.
     await delete_expired_sessions()
     yield
-    await engine.dispose()
+    await database.engine.dispose()
 
 
 app = FastAPI(
     lifespan=lifespan,
-    root_path=root_prefix,
+    root_path=ROOT_PREFIX,
     title=APP_ROOT_PATH.capitalize() or "FastAPI LowJS Auth",
 )
+
 
 class RevalidatedStaticFiles(StaticFiles):
     # Without Cache-Control, browsers guess from Last-Modified how long a file stays
@@ -426,22 +63,7 @@ app.add_middleware(OriginCheckMiddleware, public_url=APP_PUBLIC_URL)
 app.add_middleware(SecurityHeadersMiddleware, https=APP_PUBLIC_URL.startswith("https://"))
 
 
-# --> RUTAS JWT (email/pass):
-# from fastapi_users.schemas import UserCreate, UserRead
-
-
-class UserRead(schemas.BaseUser[uuid.UUID]):
-    pass
-
-
-class UserCreate(schemas.BaseUserCreate):
-    pass
-
-
-class UserUpdate(schemas.BaseUserUpdate):  # opcional (para /users router)
-    pass
-
-
+# --> FASTAPI-USERS ROUTES:
 # Sign-in, registration and the routes that send emails are rate limited
 # (rate_limits.py picks the limits for each route).
 app.include_router(
@@ -457,7 +79,7 @@ app.include_router(
     dependencies=[Depends(rate_limits.enforce)]
 )
 app.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
+    fastapi_users.get_register_router(users.UserRead, users.UserCreate),
     prefix="/auth",
     tags=["auth"],
     dependencies=[Depends(rate_limits.enforce)]
@@ -469,7 +91,7 @@ app.include_router(
     dependencies=[Depends(rate_limits.enforce)]
 )
 app.include_router(
-    fastapi_users.get_verify_router(UserRead),
+    fastapi_users.get_verify_router(users.UserRead),
     prefix="/auth",
     tags=["auth"],
     dependencies=[Depends(rate_limits.enforce)]
@@ -478,7 +100,7 @@ app.include_router(
 # one, and the email without confirming it (a new email plus "forgot password"
 # hands the account over). Passwords change through /auth/change-password.
 # Removed before include_router, which copies the routes.
-users_router = fastapi_users.get_users_router(UserRead, UserUpdate)
+users_router = fastapi_users.get_users_router(users.UserRead, users.UserUpdate)
 patch_me = [route for route in users_router.routes if route.name == "users:patch_current_user"]
 if len(patch_me) != 1:
     # A fastapi-users update renamed it: better not to start than to expose it again.
@@ -487,7 +109,7 @@ users_router.routes.remove(patch_me[0])
 app.include_router(users_router, prefix="/users", tags=["users"])
 
 
-# --> TEST ROUTE:
+# --> PAGES:
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse(
@@ -495,7 +117,7 @@ async def login_page(request: Request):
         "login.html",
         {
             "base_url": str(request.base_url).rstrip("/"),
-            "min_password_length": MIN_PASSWORD_LENGTH,
+            "min_password_length": users.MIN_PASSWORD_LENGTH,
         }
     )
 
@@ -505,252 +127,6 @@ async def get_me(user: CurrentUser):
     return {"email": user.email, "id": str(user.id), "is_verified": user.is_verified}
 
 
-# --> SESSIONS:
-async def renew_this_session(request: Request, token: str, user: User, strategy: HashedDatabaseStrategy) -> Response:
-    """For after ending every session of the account: this browser carries on."""
-    if token == request.cookies.get(cookie_transport.cookie_name):
-        # Signed in with the session cookie: a new session, so that a copy of the
-        # old cookie doesn't keep working.
-        return await cookie_transport.get_login_response(await strategy.write_token(user))
-    # Signed in with a Bearer JWT: there's no session to renew.
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@app.post(
-    "/auth/cookie/logout-others",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-    name="auth:cookie.logout_others",
-    tags=["auth"],
-)
-async def logout_other_devices(
-    request: Request,
-    user_and_token: CurrentUserAndToken,
-    user_manager: UserManagerDep,
-    strategy: SessionStrategyDep,
-):
-    # Every session ends, this one too, in case someone has a copy of this
-    # browser's cookie. Then this browser gets a new one.
-    user, token = user_and_token
-    await user_manager.end_all_sessions(user)
-    return await renew_this_session(request, token, user, strategy)
-
-
-# --> CURRENT PASSWORD CHECKS (password change, account deletion):
-async def check_current_password(user_manager: UserManager, user: User, password: str, error: str) -> None:
-    # Counted before checking: once blocked, even the right password gets a 429,
-    # so the answer doesn't tell whether a guess was right.
-    await rate_limits.current_password_attempted(user.id)
-    verified, _ = user_manager.password_helper.verify_and_update(password, user.hashed_password)
-    if not verified:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, error)
-    await rate_limits.current_password_succeeded(user.id)
-
-
-# --> PASSWORD CHANGE:
-class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str
-
-
-@app.post(
-    "/auth/change-password",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-    name="auth:change_password",
-    tags=["auth"],
-)
-async def change_password(
-    request: Request,
-    body: PasswordChange,
-    user_and_token: CurrentUserAndToken,
-    user_manager: UserManagerDep,
-    strategy: SessionStrategyDep,
-):
-    user, token = user_and_token
-    await check_current_password(user_manager, user, body.current_password, "CHANGE_PASSWORD_BAD_CREDENTIALS")
-
-    try:
-        # on_after_update ends every session of the account, this one included.
-        user = await user_manager.update(UserUpdate(password=body.new_password), user, safe=True, request=request)
-    except InvalidPasswordException as e:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            {"code": "CHANGE_PASSWORD_INVALID_PASSWORD", "reason": e.reason},
-        )
-
-    # After the update, so that the new session isn't ended too.
-    return await renew_this_session(request, token, user, strategy)
-
-
-# --> ACCOUNT DELETION:
-class AccountDeletion(BaseModel):
-    password: str
-
-
-@app.post(
-    "/auth/delete-account",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-    name="auth:delete_account",
-    tags=["auth"],
-)
-async def delete_account(request: Request, body: AccountDeletion, user: CurrentUser, user_manager: UserManagerDep):
-    await check_current_password(user_manager, user, body.password, "DELETE_ACCOUNT_BAD_CREDENTIALS")
-    # The hooks end every session and email the owner.
-    await user_manager.delete(user, request=request)
-    # The cookie is read before a Bearer token: if this request carried a live
-    # one, it was this account's.
-    return await cookie_transport.get_logout_response()
-
-
-# --> EMAIL CHANGE:
-class EmailChangeRequest(BaseModel):
-    new_email: EmailStr
-    password: str
-
-
-class EmailChangeLink(BaseModel):
-    token: str
-
-
-@app.post(
-    "/auth/request-email-change",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_class=Response,
-    name="auth:request_email_change",
-    tags=["auth"],
-)
-async def request_email_change(
-    request: Request, body: EmailChangeRequest, user: CurrentUser, user_manager: UserManagerDep
-):
-    await check_current_password(user_manager, user, body.password, "CHANGE_EMAIL_BAD_CREDENTIALS")
-    # Before the checks below, so that they can't be used to probe many addresses.
-    await rate_limits.email_requested(request, user.email)
-    if rate_limits.normalize(body.new_email) == rate_limits.normalize(user.email):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_SAME_EMAIL")
-    if await user_manager.user_db.get_by_email(body.new_email) is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
-    # Even when the current address isn't verified: without this step, anyone with
-    # the password could move the account and leave its owner no way back.
-    user_manager.send_email_change_approval(user, body.new_email)
-    return Response(status_code=status.HTTP_202_ACCEPTED)
-
-
-@app.post("/auth/approve-email-change", name="auth:approve_email_change", tags=["auth"])
-async def approve_email_change(request: Request, body: EmailChangeLink, user_manager: UserManagerDep):
-    # No session needed: the link proves access to the current address.
-    found = await user_manager.email_change_from_link(body.token, APPROVE_EMAIL_AUDIENCE)
-    if found is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_BAD_TOKEN")
-    user, new_email = found
-    # Approving again resends the confirmation: limited like any other email.
-    await rate_limits.email_requested(request, new_email)
-    if await user_manager.user_db.get_by_email(new_email) is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
-    user_manager.send_email_change_confirmation(user, new_email)
-    return {"email": new_email}
-
-
-@app.post("/auth/confirm-email-change", name="auth:confirm_email_change", tags=["auth"])
-async def confirm_email_change(body: EmailChangeLink, user_manager: UserManagerDep):
-    found = await user_manager.email_change_from_link(body.token, CONFIRM_EMAIL_AUDIENCE)
-    if found is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_BAD_TOKEN")
-    user, new_email = found
-    old_email = user.email
-    if await user_manager.user_db.get_by_email(new_email) is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
-    try:
-        # Not user_manager.update(): it would mark the account unverified, and this
-        # link just proved the new address. Sessions and Bearer tokens stay.
-        await user_manager.user_db.update(user, {"email": new_email, "is_verified": True})
-    except IntegrityError:  # someone signed up with it in the meantime
-        await user_manager.user_db.session.rollback()
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CHANGE_EMAIL_ALREADY_EXISTS")
-    # The old address approved the change; it only gets the news.
-    user_manager.send_email_changed_notice(old_email, new_email)
-    return {"email": new_email}
-
-
-# --> GOOGLE LOGIN:
-logger = logging.getLogger(__name__)
-
-
-def back_to_login(error: str | None = None) -> RedirectResponse:
-    # An error goes in the fragment, for the page to show. The state cookie is
-    # single use.
-    response = RedirectResponse(f"{root_prefix}/login" + (f"#error={error}" if error else ""))
-    response.delete_cookie(GOOGLE_STATE_COOKIE, **google_state_cookie_options)
-    return response
-
-
-@app.get("/auth/google/login")
-async def google_login():
-    # A random "state" tied to this browser by a cookie: the callback rejects
-    # logins this browser didn't start (login CSRF).
-    state = secrets.token_urlsafe(32)
-    async with google_sso:
-        response = await google_sso.get_login_redirect(state=state)
-    response.set_cookie(GOOGLE_STATE_COOKIE, state, max_age=600, **google_state_cookie_options)
-    return response
-
-
-@app.get("/auth/google/callback")
-async def google_callback(
-    request: Request,
-    user_manager: UserManagerDep,
-    strategy: SessionStrategyDep,
-        ):
-    expected_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
-    state = request.query_params.get("state", "")
-    if not expected_state or not secrets.compare_digest(state.encode(), expected_state.encode()):
-        return back_to_login("GOOGLE_FAILED")
-
-    # Google comes back with ?error=... instead of a code when the user cancels.
-    if "error" in request.query_params:
-        return back_to_login("GOOGLE_CANCELLED")
-
-    try:
-        async with google_sso:
-            user_info = await google_sso.verify_and_process(request)
-    except Exception:
-        # An expired code, an email Google hasn't verified, a network error...
-        logger.exception("Google sign-in failed")
-        return back_to_login("GOOGLE_FAILED")
-
-    if user_info is None:
-        return back_to_login("GOOGLE_FAILED")
-
-    # Search or create user. Google only returns verified emails (fastapi-sso
-    # rejects the rest), so this login proves the user owns the address.
-    user = await user_manager.user_db.get_by_email(user_info.email)
-    if not user or not user.is_verified:
-        # Google wins: the account becomes verified and gets the hash of a random
-        # password. New accounts have no password, and the one of an unverified
-        # account may have been set by whoever registered the email first.
-        password = user_manager.password_helper.generate()
-        google_fields = {
-            "hashed_password": user_manager.password_helper.hash(password),
-            "is_verified": True,
-        }
-        if user:
-            # Whoever set that password may still be signed in: end their sessions.
-            # No commit: user_db.update() commits it with the takeover, so both
-            # happen or neither does.
-            await user_manager.delete_sessions(user)
-            user = await user_manager.user_db.update(user, google_fields)
-        else:
-            user = await user_manager.user_db.create({
-                "email": user_info.email,
-                "is_active": True,
-                **google_fields
-            })
-
-    # The same session cookie as /auth/cookie/login.
-    response = back_to_login()
-    login_response = await cookie_transport.get_login_response(await strategy.write_token(user))
-    for cookie in login_response.headers.getlist("set-cookie"):
-        response.headers.append("set-cookie", cookie)
-    await user_manager.on_after_login(user, request, response)
-    return response
+# --> THE ACCOUNT PAGE AND GOOGLE SIGN-IN:
+app.include_router(account.router)
+app.include_router(google_sign_in.router)

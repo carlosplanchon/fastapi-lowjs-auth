@@ -36,7 +36,7 @@ def run_in_app(client, app_module, statement):
     """Run a SQL statement on the app's database, on the app's event loop."""
 
     async def run():
-        async with app_module.async_session_maker() as session:
+        async with app_module.database.async_session_maker() as session:
             result = await session.execute(statement)
             await session.commit()
             return result
@@ -213,7 +213,7 @@ def test_bearer_tokens_without_the_password_fingerprint_are_refused(client, pref
     # Like the ones issued before tokens carried it: correctly signed, but refused.
     register(client, prefix)
     user_id = me_with_bearer(client, prefix, bearer_token(client, prefix)).json()["id"]
-    token = generate_jwt({"sub": user_id, "aud": ["fastapi-users:auth"]}, app_module.JWT_SIGNING_SECRET_KEY, 3600)
+    token = generate_jwt({"sub": user_id, "aud": ["fastapi-users:auth"]}, app_module.users.JWT_SIGNING_SECRET_KEY, 3600)
     assert me_with_bearer(client, prefix, token).status_code == 401
 
 

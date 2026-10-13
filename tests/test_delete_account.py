@@ -28,7 +28,7 @@ def run_in_app(client, app_module, statement):
     """Run a SQL statement on the app's database, on the app's event loop."""
 
     async def run():
-        async with app_module.async_session_maker() as session:
+        async with app_module.database.async_session_maker() as session:
             result = await session.execute(statement)
             await session.commit()
             return result
