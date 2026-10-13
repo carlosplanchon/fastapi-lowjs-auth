@@ -1,13 +1,28 @@
+import asyncio
 import importlib
+import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from sqlalchemy import make_url, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"
+
+# The tests run on SQLite. With a Postgres URL here, like
+# postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres, they run on
+# Postgres: each test gets a database of its own, created and dropped through
+# that connection. CI runs them both ways.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def pytest_report_header():
+    return f"database: {'Postgres (TEST_DATABASE_URL)' if TEST_DATABASE_URL else 'SQLite'}"
 
 
 CONFIG = """
@@ -64,15 +79,38 @@ def alembic_config():
     return Config(str(ALEMBIC_INI))
 
 
+async def run_on_postgres(statement):
+    # Outside a transaction: CREATE DATABASE and DROP DATABASE need that.
+    engine = create_async_engine(TEST_DATABASE_URL, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text(statement))
+    finally:
+        await engine.dispose()
+
+
 @pytest.fixture
-def make_app(tmp_path, load_shared, alembic_config):
-    """Return a function that imports the app on a fresh, migrated SQLite database."""
+def database_url(tmp_path):
+    """A fresh, empty database for this test: a SQLite file, or a Postgres database."""
+    if not TEST_DATABASE_URL:
+        yield f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+        return
+    name = f"test_{uuid.uuid4().hex}"
+    asyncio.run(run_on_postgres(f'CREATE DATABASE "{name}"'))
+    yield make_url(TEST_DATABASE_URL).set(database=name)
+    # FORCE closes any connection a failed test left open.
+    asyncio.run(run_on_postgres(f'DROP DATABASE "{name}" WITH (FORCE)'))
+
+
+@pytest.fixture
+def make_app(database_url, load_shared, alembic_config):
+    """Return a function that imports the app on a fresh, migrated database."""
 
     def make(**config):
         shared = load_shared(**config)
-        # Point the DB at a throwaway SQLite file before the app creates its engine,
-        # and create the tables with the same migrations as production.
-        shared.DB_URL = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+        # Point the app at the test database before it creates its engine, and
+        # create the tables with the same migrations as production.
+        shared.DB_URL = database_url
         command.upgrade(alembic_config, "head")
         return importlib.import_module("auth_backend_api")
 

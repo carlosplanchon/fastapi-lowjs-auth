@@ -36,6 +36,41 @@ jobs:
           git diff --exit-code -- src/web/static/app.css \
             || { echo "::error::src/web/static/app.css is out of date: run 'bash build_css.sh' and commit it."; exit 1; }
 
+  # The same tests on Postgres, where transactions and migrations behave as in
+  # production. Each test creates and drops a database of its own on this server.
+  tests-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # The same Postgres as the compose templates.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # Over TCP: during first-run init it only listens on a socket.
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests on Postgres
+        run: uv run pytest
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
+
   docker:
     runs-on: ubuntu-latest
     steps:

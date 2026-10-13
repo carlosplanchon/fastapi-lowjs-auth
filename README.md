@@ -151,11 +151,13 @@ No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`
 ## Tests and CI
 
 - `uv run pytest` runs the tests (with SQLite and a simulated Google login, no Postgres needed).
+- To run them on Postgres too, as CI does, give them a server where they can create databases: each test creates one of its own and drops it afterwards. For example, `docker run --rm -d -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5433:5432 postgres:17-alpine`, a few seconds for it to start, then `TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5433/postgres uv run pytest`.
 - `uv run ruff check` runs the linter: ruff's default rules (likely bugs, modern syntax, import order) plus a few more error rules (`pyproject.toml`). `uv run ruff check --fix` fixes most findings. Ruff's version is pinned in `uv.lock`, so its defaults only change when Dependabot updates it, and any new finding shows up in that pull request's CI.
 
 GitHub Actions (`.github/workflows/tests.yml`) runs on every push to `main` and every pull request:
 
 - the linter and the tests, and a check that `src/web/static/app.css` matches the templates;
+- the tests again on Postgres (the compose templates' version), where transactions and migrations behave as in production;
 - the Docker image, built and started from the compose template with Postgres. It checks that the API serves the sign-in page, and that no password from `config.toml` or the compose file ended up in the image.
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the actions, the Python packages and the Docker images.
