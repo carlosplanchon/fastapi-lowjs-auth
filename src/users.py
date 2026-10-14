@@ -83,7 +83,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         # forgot-password takes as long for unknown emails as for known ones.
         self.background_tasks = background_tasks
 
-    async def validate_password(self, password: str, user: "UserCreate | User") -> None:
+    async def validate_password(self, password: str, user: UserCreate | User) -> None:
         if len(password) < MIN_PASSWORD_LENGTH:
             raise InvalidPasswordException(
                 reason=f"Password should be at least {MIN_PASSWORD_LENGTH} characters"

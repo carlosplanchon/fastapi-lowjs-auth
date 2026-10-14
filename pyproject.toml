@@ -3,7 +3,7 @@ name = "fastapi-lowjs-auth"
 version = "0.1.0"
 description = "LowJS Authentication FastAPI template. Supports Google Authentication and Email / Password."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.20.0",
     "asyncpg>=0.32.0",
