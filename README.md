@@ -17,7 +17,7 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 - A frontend with no JavaScript build: Jinja templates, Alpine.js (its CSP build) and Tailwind, with no CDNs.
 - Alembic migrations, a Dockerfile with a Docker Compose template, and CI with tests, lint, an image check and Dependabot.
 
-It doesn't include two-factor authentication, passkeys, a sign-in history or a list of signed-in devices (the account page can only sign out all the others at once).
+It doesn't include two-factor authentication, passkeys, a sign-in history or a list of signed-in devices (the account page can only sign out all the others at once). It hasn't had an independent security audit either: review it before using it in production.
 
 ## Quick start
 
@@ -120,6 +120,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 - A link opens a page with a button, and nothing happens until the person clicks. Mail scanners open links too: a verification that ran on its own could verify an address its owner never saw.
 - The emails and pages that verify an address or confirm a new one tell whoever didn't ask for them not to confirm. Anyone can type someone else's address when signing up or changing their email; if the owner confirmed it, that account would be verified with a password someone else knows, and signing in with Google would later take the owner into it.
 - `[email] BACKEND = "console"` writes emails to the server log instead of sending them (development only). For real delivery set `BACKEND = "smtp"` and the `SMTP_*` settings. To try SMTP locally, a catch-all server such as [Mailpit](https://mailpit.axllent.org/) works: `SMTP_HOST = "127.0.0.1"`, `SMTP_PORT = 1025`, `SMTP_SECURITY = "none"`.
+- Emails go out after the response, from the app itself. A failure that may pass (no connection, a timeout, a 4xx answer) is retried after 2 and then 10 seconds (`RETRY_DELAYS_SECONDS` in `src/mailer.py`). An email that still fails, or that the server refuses (a 5xx answer, a wrong password), is lost, and the log says so. There's no queue either: restarting the app loses the emails waiting for a retry. If every email must arrive, send them through a persistent queue.
 
 ## Rate limiting
 
