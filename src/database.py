@@ -25,12 +25,13 @@ async def get_async_session() -> AsyncGenerator[AsyncSession]:
 
 
 # One per request: everything that depends on it shares the same session.
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+# Closed before the response: the emails sent after it don't hold a connection.
+AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session, scope="function")]
 
 
 async def get_user_db(session: AsyncSessionDep):
-    yield SQLAlchemyUserDatabase(session, User)
+    return SQLAlchemyUserDatabase(session, User)
 
 
 async def get_access_token_db(session: AsyncSessionDep):
-    yield SQLAlchemyAccessTokenDatabase(session, AccessToken)
+    return SQLAlchemyAccessTokenDatabase(session, AccessToken)

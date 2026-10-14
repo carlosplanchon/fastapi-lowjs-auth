@@ -12,11 +12,11 @@ def fake_google_account(monkeypatch, app_module, email):
     async def get_discovery_document():
         return {"authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth"}
 
-    async def verify_and_process(request, **kwargs):
+    async def process_login(code, request, **kwargs):
         return OpenID(email=email, provider="google", id="google-account-id")
 
     monkeypatch.setattr(app_module.google_sign_in.google_sso, "get_discovery_document", get_discovery_document)
-    monkeypatch.setattr(app_module.google_sign_in.google_sso, "verify_and_process", verify_and_process)
+    monkeypatch.setattr(app_module.google_sign_in.google_sso, "process_login", process_login)
 
 
 def start_google_login(client, prefix):
@@ -250,11 +250,11 @@ def assert_back_to_login_with_error(client, prefix, response, error):
 def test_google_callback_rejects_bad_state(client, prefix, app_module, monkeypatch):
     exchanged_codes = []
 
-    async def verify_and_process(request, **kwargs):
-        exchanged_codes.append(request.query_params["code"])
+    async def process_login(code, request, **kwargs):
+        exchanged_codes.append(code)
 
     fake_google_account(monkeypatch, app_module, "new@gmail.com")
-    monkeypatch.setattr(app_module.google_sign_in.google_sso, "verify_and_process", verify_and_process)
+    monkeypatch.setattr(app_module.google_sign_in.google_sso, "process_login", process_login)
 
     # No state cookie: a login this browser never started (login CSRF).
     response = google_callback(client, prefix, code="test", state="forged")
@@ -275,16 +275,24 @@ def test_google_callback_when_the_user_cancels(client, prefix, app_module, monke
     assert_back_to_login_with_error(client, prefix, response, "GOOGLE_CANCELLED")
 
 
+def test_google_callback_without_a_code(client, prefix, app_module, monkeypatch):
+    fake_google_account(monkeypatch, app_module, "new@gmail.com")
+    state = start_google_login(client, prefix)
+
+    response = google_callback(client, prefix, state=state)
+    assert_back_to_login_with_error(client, prefix, response, "GOOGLE_FAILED")
+
+
 def test_google_callback_when_google_fails(client, prefix, app_module, monkeypatch):
     # Whatever goes wrong while talking to Google, the user lands on the sign-in
     # page with a readable message instead of an error page.
     fake_google_account(monkeypatch, app_module, "new@gmail.com")
     for failure in (SSOLoginError(401, "User is not verified with Google"), ConnectionError("network down")):
         # failure=failure binds this iteration's error, not whatever the loop ends on.
-        async def verify_and_process(request, failure=failure, **kwargs):
+        async def process_login(code, request, failure=failure, **kwargs):
             raise failure
 
-        monkeypatch.setattr(app_module.google_sign_in.google_sso, "verify_and_process", verify_and_process)
+        monkeypatch.setattr(app_module.google_sign_in.google_sso, "process_login", process_login)
         state = start_google_login(client, prefix)
         response = google_callback(client, prefix, code="test", state=state)
         assert_back_to_login_with_error(client, prefix, response, "GOOGLE_FAILED")
@@ -296,6 +304,7 @@ def test_google_state_cookie_is_httponly_and_scoped(client, prefix, app_module, 
     response = client.get(f"{prefix}/auth/google/login", follow_redirects=False)
     cookie = response.headers["set-cookie"].lower()
     assert cookie.startswith("lowjs_google_state=")
+    assert "sso_state" not in cookie
     assert "httponly" in cookie
     assert "samesite=lax" in cookie
     assert f"path={prefix}/auth/google/callback" in cookie

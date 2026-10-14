@@ -52,6 +52,8 @@ async def google_login():
     state = secrets.token_urlsafe(32)
     async with google_sso:
         response = await google_sso.get_login_redirect(state=state)
+    # Without fastapi-sso's own state cookie (sso_state), which goes to the whole domain.
+    del response.headers["set-cookie"]
     response.set_cookie(GOOGLE_STATE_COOKIE, state, max_age=600, **google_state_cookie_options)
     return response
 
@@ -70,10 +72,14 @@ async def google_callback(
     # Google comes back with ?error=... instead of a code when the user cancels.
     if "error" in request.query_params:
         return back_to_login("GOOGLE_CANCELLED")
+    code = request.query_params.get("code")
+    if not code:
+        return back_to_login("GOOGLE_FAILED")
 
     try:
         async with google_sso:
-            user_info = await google_sso.verify_and_process(request)
+            # Not verify_and_process(): it checks the state against fastapi-sso's own cookie.
+            user_info = await google_sso.process_login(code, request)
     except Exception:
         # An expired code, an email Google hasn't verified, a network error...
         logger.exception("Google sign-in failed")

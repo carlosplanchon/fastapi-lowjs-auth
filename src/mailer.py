@@ -16,9 +16,6 @@ if EMAIL_BACKEND not in ("console", "smtp"):
 if SMTP_SECURITY not in ("starttls", "ssl", "none"):
     raise ValueError(f'[email] SMTP_SECURITY must be "starttls", "ssl" or "none", not {SMTP_SECURITY!r}')
 
-# A failure that may pass (no connection, a timeout, a 4xx answer) is retried after
-# these pauses, in seconds. There's no queue: an email that still fails, or is
-# waiting for a retry when the app stops, is lost, and the log says so.
 RETRY_DELAYS_SECONDS = (2, 10)
 
 

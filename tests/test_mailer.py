@@ -121,3 +121,18 @@ def test_the_app_retries_an_email_after_the_response(client, prefix, app_module,
     assert response.status_code == 202
     assert [message["Subject"] for message in delivered] == ["Reset your password"]
     assert pauses == [mailer.RETRY_DELAYS_SECONDS[0]]
+
+
+def test_emails_go_out_without_holding_a_database_connection(client, prefix, app_module, monkeypatch):
+    # Otherwise a slow or unreachable SMTP server would use up the connection pool.
+    mailer = app_module.users.mailer
+    connections_in_use = []
+
+    def deliver(message):
+        connections_in_use.append(app_module.database.engine.pool.checkedout())
+
+    monkeypatch.setattr(mailer, "EMAIL_BACKEND", "smtp")
+    monkeypatch.setattr(mailer, "deliver", deliver)
+    client.post(f"{prefix}/auth/register", json={"email": "ana@example.com", "password": "long-secret"})
+    client.post(f"{prefix}/auth/forgot-password", json={"email": "ana@example.com"})
+    assert connections_in_use == [0, 0]
