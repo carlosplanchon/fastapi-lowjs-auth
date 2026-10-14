@@ -2,6 +2,7 @@ import time
 
 from fastapi import HTTPException, Request
 from limits import parse
+from limits.aio.storage import MemoryStorage
 from limits.aio.strategies import MovingWindowRateLimiter
 from limits.storage import storage_from_string
 
@@ -12,9 +13,21 @@ def setting(name: str, default: str) -> str:
     return RATE_LIMIT_SETTINGS.get(name, default)
 
 
+class ClearSafeMemoryStorage(MemoryStorage):
+    """limits' in-memory storage, whose cleanup task fails on a key cleared while it runs."""
+
+    async def clear(self, key: str) -> None:
+        await super().clear(key)
+        # Left empty instead of gone: the cleanup task removes it.
+        self.events[key] = []
+
+
 # Counters live in this process unless STORAGE_URI points to a shared store such
 # as Redis, which is needed when the app runs with several workers.
-limiter = MovingWindowRateLimiter(storage_from_string("async+" + setting("STORAGE_URI", "memory://")))
+STORAGE_URI = setting("STORAGE_URI", "memory://")
+limiter = MovingWindowRateLimiter(
+    ClearSafeMemoryStorage() if STORAGE_URI == "memory://" else storage_from_string("async+" + STORAGE_URI)
+)
 
 LOGIN_FAILURES_PER_ACCOUNT = parse(setting("LOGIN_FAILURES_PER_ACCOUNT", "5/15minutes"))
 LOGIN_ATTEMPTS_PER_IP = parse(setting("LOGIN_ATTEMPTS_PER_IP", "30/15minutes"))

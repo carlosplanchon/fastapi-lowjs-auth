@@ -1,3 +1,5 @@
+import asyncio
+import importlib
 import re
 
 from fastapi.testclient import TestClient
@@ -212,3 +214,20 @@ def test_registrations_are_limited_per_ip(make_app):
         assert register(client, "", email="a@example.com").status_code == 201
         assert register(client, "", email="b@example.com").status_code == 201
         assert_too_many(register(client, "", email="c@example.com"))
+
+
+def test_clearing_a_limit_while_the_cleanup_task_runs(load_shared):
+    # A key cleared while limits' cleanup task runs made it fail, with an error in the log.
+    load_shared()
+    rate_limits = importlib.import_module("rate_limits")
+    limit = rate_limits.LOGIN_FAILURES_PER_ACCOUNT
+
+    async def clear_while_the_cleanup_runs():
+        await asyncio.to_thread(lambda: None)  # threads already started, as in the running app
+        await rate_limits.limiter.hit(limit, "a")
+        await rate_limits.limiter.hit(limit, "b")
+        await asyncio.sleep(0)  # the cleanup task starts, with "a"
+        await rate_limits.limiter.clear(limit, "b")
+        await rate_limits.limiter.storage.timer  # raises what made it fail
+
+    asyncio.run(clear_while_the_cleanup_runs())

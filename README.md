@@ -61,6 +61,7 @@ To run Postgres and the API with Docker Compose:
 - Other commands run without starting the server, e.g. `docker compose -p yourproject run --rm api alembic current`.
 - With several replicas, don't let each one migrate as it starts: run `alembic upgrade head` once per deploy, as its own step (like the command above), and give the replicas `uvicorn auth_backend_api:app --app-dir src` as their command.
 - uvicorn takes its settings from `UVICORN_*` variables (`UVICORN_PORT`, ...). More workers (`WEB_CONCURRENCY`) or replicas need a shared store for the rate limits (`STORAGE_URI`, see [Rate limiting](#rate-limiting)).
+- Passwords are hashed with Argon2 (about 0.2 s and 64 MiB each) in threads, two at a time per worker (`HASHING_SLOTS` in `src/users.py`), so sign-ins don't hold up other requests.
 - The Python and uv images are pinned by digest, and Dependabot proposes their updates (see [Tests and CI](#tests-and-ci)). To update one by hand, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`.
 
 ## Database migrations

@@ -1,9 +1,11 @@
+import asyncio
 import secrets
 import uuid
 from typing import Annotated
 
 import jwt
 from fastapi import BackgroundTasks, Depends, Request
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
     BaseUserManager,
     InvalidPasswordException,
@@ -23,6 +25,9 @@ from sessions import password_fingerprint
 from shared import APP_PUBLIC_URL, JWT_SIGNING_SECRET_KEY, ROOT_PREFIX
 
 MIN_PASSWORD_LENGTH = 8
+
+# Argon2 takes about 0.2 s and 64 MiB per hash: in threads, two at a time.
+HASHING_SLOTS = asyncio.Semaphore(2)
 
 
 # Built from the configured public URL, never from the request's Host header: a
@@ -83,6 +88,75 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             raise InvalidPasswordException(
                 reason=f"Password should be at least {MIN_PASSWORD_LENGTH} characters"
             )
+
+    # fastapi-users hashes on the event loop, stalling every request: rewritten below to use these.
+    async def hash_password(self, password: str) -> str:
+        async with HASHING_SLOTS:
+            return await asyncio.to_thread(self.password_helper.hash, password)
+
+    async def verify_password(self, password: str, hashed_password: str) -> tuple[bool, str | None]:
+        async with HASHING_SLOTS:
+            return await asyncio.to_thread(self.password_helper.verify_and_update, password, hashed_password)
+
+    async def authenticate(self, credentials: OAuth2PasswordRequestForm) -> User | None:
+        try:
+            user = await self.get_by_email(credentials.username)
+        except exceptions.UserNotExists:
+            # Hashed anyway, so that an unknown email takes as long as a wrong password.
+            await self.hash_password(credentials.password)
+            return None
+        verified, updated_password_hash = await self.verify_password(credentials.password, user.hashed_password)
+        if not verified:
+            return None
+        if updated_password_hash is not None:
+            await self.user_db.update(user, {"hashed_password": updated_password_hash})
+        return user
+
+    async def create(self, user_create: UserCreate, safe: bool = False, request: Request | None = None) -> User:
+        await self.validate_password(user_create.password, user_create)
+        if await self.user_db.get_by_email(user_create.email) is not None:
+            raise exceptions.UserAlreadyExists()
+        user_dict = user_create.create_update_dict() if safe else user_create.create_update_dict_superuser()
+        user_dict["hashed_password"] = await self.hash_password(user_dict.pop("password"))
+        created_user = await self.user_db.create(user_dict)
+        await self.on_after_register(created_user, request)
+        return created_user
+
+    async def _update(self, user: User, update_dict: dict) -> User:
+        # A new password arrives already hashed: fastapi-users' _update then just stores it.
+        if update_dict.get("password") is not None:
+            update_dict = dict(update_dict)
+            password = update_dict.pop("password")
+            await self.validate_password(password, user)
+            update_dict["hashed_password"] = await self.hash_password(password)
+        return await super()._update(user, update_dict)
+
+    # HMAC fingerprint, as in the JWTs: fastapi-users' Argon2 one slowed down registered emails only.
+    async def forgot_password(self, user: User, request: Request | None = None) -> None:
+        if not user.is_active:
+            raise exceptions.UserInactive()
+        data = {
+            "sub": str(user.id),
+            "password_fgpt": password_fingerprint(JWT_SIGNING_SECRET_KEY, user.hashed_password),
+            "aud": self.reset_password_token_audience,
+        }
+        token = generate_jwt(data, self.reset_password_token_secret, self.reset_password_token_lifetime_seconds)
+        await self.on_after_forgot_password(user, token, request)
+
+    async def reset_password(self, token: str, password: str, request: Request | None = None) -> User:
+        try:
+            data = decode_jwt(token, self.reset_password_token_secret, [self.reset_password_token_audience])
+            user = await self.get(self.parse_id(str(data.get("sub", ""))))
+        except (jwt.PyJWTError, exceptions.InvalidID):
+            raise exceptions.InvalidResetPasswordToken()
+        fingerprint = password_fingerprint(JWT_SIGNING_SECRET_KEY, user.hashed_password)
+        if not secrets.compare_digest(str(data.get("password_fgpt", "")), fingerprint):
+            raise exceptions.InvalidResetPasswordToken()
+        if not user.is_active:
+            raise exceptions.UserInactive()
+        updated_user = await self._update(user, {"password": password})
+        await self.on_after_reset_password(user, request)
+        return updated_user
 
     async def on_after_register(self, user: User, request: Request | None = None) -> None:
         if not user.is_verified:

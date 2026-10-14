@@ -50,7 +50,7 @@ async def check_current_password(user_manager: UserManager, user: User, password
     # Counted before checking: once blocked, even the right password gets a 429,
     # so the answer doesn't tell whether a guess was right.
     await rate_limits.current_password_attempted(user.id)
-    verified, _ = user_manager.password_helper.verify_and_update(password, user.hashed_password)
+    verified, _ = await user_manager.verify_password(password, user.hashed_password)
     if not verified:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, error)
     await rate_limits.current_password_succeeded(user.id)

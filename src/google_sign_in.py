@@ -97,7 +97,7 @@ async def google_callback(
         # account may have been set by whoever registered the email first.
         password = user_manager.password_helper.generate()
         google_fields = {
-            "hashed_password": user_manager.password_helper.hash(password),
+            "hashed_password": await user_manager.hash_password(password),
             "is_verified": True,
         }
         if user:

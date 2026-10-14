@@ -1,5 +1,6 @@
 import re
 
+import fastapi_users.manager
 from fastapi.testclient import TestClient
 
 
@@ -96,6 +97,17 @@ def test_forgot_password_for_an_unknown_email_sends_nothing(client, prefix, sent
     response = client.post(f"{prefix}/auth/forgot-password", json={"email": "nobody@example.com"})
     assert response.status_code == 202
     assert sent_emails == []
+
+
+def test_forgot_password_takes_no_longer_for_registered_emails(client, prefix, sent_emails, monkeypatch):
+    def hashing(*args):
+        raise AssertionError("forgot-password hashed a password")
+
+    register(client, prefix)
+    # Only registered emails would wait for a hash: the answer's time would give them away.
+    monkeypatch.setattr(fastapi_users.manager.PasswordHelper, "hash", hashing)
+    monkeypatch.setattr(fastapi_users.manager.PasswordHelper, "verify_and_update", hashing)
+    assert request_reset(client, prefix, sent_emails)[1] == "Reset your password"
 
 
 def test_email_links_ignore_the_request_host_header(client, prefix, sent_emails):

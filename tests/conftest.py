@@ -5,10 +5,14 @@ import sys
 import uuid
 from pathlib import Path
 
+import fastapi_users.manager
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from fastapi_users.password import PasswordHelper
+from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -27,6 +31,34 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 def pytest_report_header():
     return f"database: {'Postgres (TEST_DATABASE_URL)' if TEST_DATABASE_URL else 'SQLite'}"
+
+
+def assert_off_the_event_loop():
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise AssertionError("A password was hashed on the event loop, which stalls every other request")
+
+
+class CheapPasswordHelper(PasswordHelper):
+    """Argon2 at its lowest cost, for speed, failing any test that hashes on the event loop."""
+
+    def __init__(self):
+        super().__init__(PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),)))
+
+    def hash(self, password):
+        assert_off_the_event_loop()
+        return super().hash(password)
+
+    def verify_and_update(self, plain_password, hashed_password):
+        assert_off_the_event_loop()
+        return super().verify_and_update(plain_password, hashed_password)
+
+
+@pytest.fixture(autouse=True)
+def cheap_password_hashes(monkeypatch):
+    monkeypatch.setattr(fastapi_users.manager, "PasswordHelper", CheapPasswordHelper)
 
 
 CONFIG = """
