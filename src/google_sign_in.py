@@ -1,9 +1,11 @@
 import logging
 import secrets
+import time
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
+from fastapi_sso.sso.base import DiscoveryDocument
 from fastapi_sso.sso.google import GoogleSSO
 
 from authentication import SessionStrategyDep, cookie_transport
@@ -17,11 +19,31 @@ from users import UserManagerDep
 
 logger = logging.getLogger(__name__)
 
-google_sso = GoogleSSO(
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    redirect_uri=GOOGLE_REDIRECT_URI
-)
+# Google lets clients keep its discovery document for an hour (Cache-Control: max-age=3600).
+DISCOVERY_MAX_AGE_SECONDS = 3600
+discovery_cache: dict = {}
+
+
+class CachingGoogleSSO(GoogleSSO):
+    """fastapi-sso's GoogleSSO, fetching Google's discovery document once an hour, not three times per sign-in."""
+
+    async def get_discovery_document(self) -> DiscoveryDocument:
+        if time.monotonic() < discovery_cache.get("expires_at", 0):
+            return discovery_cache["document"]
+        document = await super().get_discovery_document()
+        if {"authorization_endpoint", "token_endpoint", "userinfo_endpoint"} <= document.keys():
+            discovery_cache.update(document=document, expires_at=time.monotonic() + DISCOVERY_MAX_AGE_SECONDS)
+        return document
+
+
+def google_sso() -> CachingGoogleSSO:
+    # One per request: fastapi-sso locks it for a whole sign-in, Google's answers included.
+    return CachingGoogleSSO(
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        redirect_uri=GOOGLE_REDIRECT_URI
+    )
+
 
 # Cookie holding the OAuth "state", only sent back to the callback URL. A name of
 # its own, like the session cookie's (see SESSION_COOKIE_NAME).
@@ -50,8 +72,13 @@ async def google_login():
     # A random "state" tied to this browser by a cookie: the callback rejects
     # logins this browser didn't start (login CSRF).
     state = secrets.token_urlsafe(32)
-    async with google_sso:
-        response = await google_sso.get_login_redirect(state=state)
+    try:
+        async with google_sso() as sso:
+            response = await sso.get_login_redirect(state=state)
+    except Exception:
+        # Google's discovery document out of reach.
+        logger.exception("Google sign-in failed")
+        return back_to_login("GOOGLE_FAILED")
     # Without fastapi-sso's own state cookie (sso_state), which goes to the whole domain.
     del response.headers["set-cookie"]
     response.set_cookie(GOOGLE_STATE_COOKIE, state, max_age=600, **google_state_cookie_options)
@@ -77,9 +104,9 @@ async def google_callback(
         return back_to_login("GOOGLE_FAILED")
 
     try:
-        async with google_sso:
+        async with google_sso() as sso:
             # Not verify_and_process(): it checks the state against fastapi-sso's own cookie.
-            user_info = await google_sso.process_login(code, request)
+            user_info = await sso.process_login(code, request)
     except Exception:
         # An expired code, an email Google hasn't verified, a network error...
         logger.exception("Google sign-in failed")
