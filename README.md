@@ -179,6 +179,7 @@ GitHub Actions (`.github/workflows/tests.yml`) runs on every push to `main` and 
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the actions, the Python packages and the Docker images.
 
+- The Python packages include the ones they depend on, like Starlette under FastAPI: by default Dependabot leaves those alone, and they can get old with known vulnerabilities.
 - Minor and patch updates come grouped, one pull request per kind; major ones come one by one.
 - A new release waits a week before Dependabot proposes it. The uv image can't wait, because its registry gives no release dates.
 - It doesn't propose a new Python version, which is a decision of its own, or a new major version of Postgres, which can't read the previous one's data.
