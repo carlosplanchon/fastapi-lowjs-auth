@@ -86,7 +86,7 @@ def test_login_page_serves_its_css_js_and_images_locally(client, prefix):
     urls = re.findall(r'<(?:link|script|img)[^>]* (?:href|src)="([^"]+)"', html)
     assert len(urls) == 5  # the stylesheet, the icon, app.js, Alpine and the Google logo
     for url in urls:
-        assert url.startswith(f"{str(client.base_url).rstrip('/')}{prefix}/static/")
+        assert url.startswith(f"{prefix}/static/")
         response = client.get(url)
         assert response.status_code == 200
         assert response.headers["content-type"].startswith(("text/css", "text/javascript", "image/svg+xml"))
@@ -94,6 +94,13 @@ def test_login_page_serves_its_css_js_and_images_locally(client, prefix):
         # could be older than the page.
         assert response.headers["cache-control"] == "no-cache"
         assert client.get(url, headers={"If-None-Match": response.headers["etag"]}).status_code == 304
+
+
+def test_login_page_ignores_the_request_host_header(client, prefix):
+    # A cache in front that ignored the Host would hand a forged one to everyone.
+    html = client.get(f"{prefix}/login", headers={"host": "evil.example"}).text
+    assert "evil.example" not in html
+    assert f'data-base-path="{prefix}"' in html
 
 
 def test_password_register_and_login(client, prefix):

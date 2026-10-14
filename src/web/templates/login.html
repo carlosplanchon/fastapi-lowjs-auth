@@ -1,18 +1,18 @@
 {# templates/login.html #}
 <!DOCTYPE html>
-<html lang="en" x-data="authApp" data-base-url="{{ base_url }}">
+<html lang="en" x-data="authApp" data-base-path="{{ base_path }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
   <!-- Tailwind compilado con build_css.sh -->
-  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <link rel="stylesheet" href="{{ base_path }}/static/app.css">
   <!-- Without it, browsers ask for /favicon.ico, at the domain's root even under ROOT_PATH -->
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='favicon.svg') }}">
+  <link rel="icon" type="image/svg+xml" href="{{ base_path }}/static/favicon.svg">
   <!-- La lógica de la página, antes que Alpine (los dos con defer, se ejecutan en orden) -->
-  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+  <script defer src="{{ base_path }}/static/app.js"></script>
   <!-- Alpine.js servido localmente, versión fija; la build CSP no necesita 'unsafe-eval' -->
-  <script defer src="{{ url_for('static', path='alpine-csp-3.17.4.min.js') }}"></script>
+  <script defer src="{{ base_path }}/static/alpine-csp-3.17.4.min.js"></script>
 
   <title>Account</title>
 </head>
@@ -30,7 +30,7 @@
           <button
             class="w-full flex items-center justify-center gap-2 border border-gray-300 rounded px-4 py-2 mb-6 hover:bg-gray-50 transition"
             @click="google()">
-            <img src="{{ url_for('static', path='google.svg') }}" alt="" class="h-5">
+            <img src="{{ base_path }}/static/google.svg" alt="" class="h-5">
             <span>Sign in with Google</span>
           </button>
 

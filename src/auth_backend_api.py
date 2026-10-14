@@ -116,7 +116,8 @@ async def login_page(request: Request):
         request,
         "login.html",
         {
-            "base_url": str(request.base_url).rstrip("/"),
+            # A path, not a full URL: nothing in the page comes from the request's Host header.
+            "base_path": ROOT_PREFIX,
             "min_password_length": users.MIN_PASSWORD_LENGTH,
         }
     )

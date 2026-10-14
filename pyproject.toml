@@ -18,6 +18,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+    "httpx2>=2.13.1",
     "ipython>=9.2.0",
     "prettyprinter>=0.18.0",
     "pytest>=9.1.1",

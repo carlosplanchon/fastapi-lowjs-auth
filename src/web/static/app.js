@@ -35,8 +35,8 @@ document.addEventListener("alpine:init", () => {
   // Alpine's CSP build can't run full JavaScript from the attributes (no arrow
   // functions, no globals like fetch), so the logic lives here: x-data="authApp".
   Alpine.data("authApp", () => {
-    // Set by FastAPI on <html data-base-url="...">.
-    const BASE_URL = document.documentElement.dataset.baseUrl;
+    // Set by FastAPI on <html data-base-path="...">: "/myapp" under ROOT_PATH, "" at the root.
+    const BASE_PATH = document.documentElement.dataset.basePath;
 
     return {
       /* state ----------------------------------------------------------- */
@@ -89,7 +89,7 @@ document.addEventListener("alpine:init", () => {
         // JSON bodies are strings; URLSearchParams sets its own Content-Type.
         if (typeof opts.body === "string") headers["Content-Type"] = "application/json";
         // Same-origin requests carry the session cookie on their own.
-        const res = await fetch(BASE_URL + path, { headers, ...opts });
+        const res = await fetch(BASE_PATH + path, { headers, ...opts });
         const data = await res.json().catch(() => null);
         if (!res.ok) {
           const error = new Error(`HTTP ${res.status}`);
@@ -378,7 +378,7 @@ document.addEventListener("alpine:init", () => {
       },
 
       google() {
-        window.location.href = BASE_URL + "/auth/google/login";
+        window.location.href = BASE_PATH + "/auth/google/login";
       }
     };
   });
