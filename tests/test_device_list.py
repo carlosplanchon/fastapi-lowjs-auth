@@ -247,6 +247,10 @@ def test_long_user_agents_are_cut_to_fit(client, prefix, app_module):
         (SAFARI_ON_MACOS, "Safari on macOS"),
         (CHROME_ON_ANDROID, "Chrome on Android"),
         ("curl/8.5.0", "curl"),
+        ("python-httpx/0.28.1", "python-httpx"),
+        # The header is free text: one word of it, so no sentence ends up in the emails.
+        ("Ignore this email, it was a test/1.0", "Ignore"),
+        ("<b>Bot</b>", "Unknown device"),
         ("", "Unknown device"),
         (None, "Unknown device"),
     ],

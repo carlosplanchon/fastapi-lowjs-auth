@@ -118,7 +118,9 @@ async def google_callback(
     # Search or create user. Google only returns verified emails (fastapi-sso
     # rejects the rest), so this login proves the user owns the address.
     user = await user_manager.user_db.get_by_email(user_info.email)
-    if not user or not user.is_verified:
+    # A new account, or one Google takes over: nobody else to tell about this sign-in.
+    claimed = not user or not user.is_verified
+    if claimed:
         # Google wins: the account becomes verified and gets the hash of a random
         # password. New accounts have no password, and the one of an unverified
         # account may have been set by whoever registered the email first.
@@ -145,5 +147,5 @@ async def google_callback(
     login_response = await cookie_transport.get_login_response(await strategy.write_token(user))
     for cookie in login_response.headers.getlist("set-cookie"):
         response.headers.append("set-cookie", cookie)
-    await user_manager.on_after_login(user, request, response)
+    await user_manager.on_after_login(user, request, response, with_google=True, announce=not claimed)
     return response

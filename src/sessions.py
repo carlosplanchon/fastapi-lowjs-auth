@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -24,6 +25,12 @@ SESSION_COOKIE_NAME = "lowjs_session"
 # A session's last use is saved at most this often, not on every request.
 LAST_USED_RESOLUTION_SECONDS = 5 * 60
 
+# The accounts that signed in from this browser: a sign-in from another device emails the owner.
+KNOWN_BROWSER_COOKIE_NAME = "lowjs_known_browser"
+KNOWN_BROWSER_LIFETIME_SECONDS = 365 * 24 * 3600
+# Past this many accounts, a browser forgets the least recent one.
+KNOWN_BROWSER_MAX_ACCOUNTS = 10
+
 # First match wins: Edge and Opera also say "Chrome", Chrome says "Safari", Android says "Linux".
 BROWSERS = (
     ("Edg/", "Edge"), ("OPR/", "Opera"), ("SamsungBrowser/", "Samsung Internet"),
@@ -43,8 +50,9 @@ def describe_device(user_agent: str | None) -> str:
     system = next((name for marker, name in SYSTEMS if marker in user_agent), None)
     if browser and system:
         return f"{browser} on {system}"
-    # Other clients by their name: "curl/8.5.0" is curl.
-    return browser or system or user_agent.split("/")[0].strip()[:40] or "Unknown device"
+    # Other clients by their name, one word since it goes into emails: "curl/8.5.0" is curl.
+    name = re.match(r"[A-Za-z0-9._-]{1,40}", user_agent.strip())
+    return browser or system or (name.group() if name else "Unknown device")
 
 
 def session_expiry_cutoff(lifetime_seconds: int = SESSION_LIFETIME_SECONDS) -> datetime:
@@ -133,6 +141,22 @@ def password_fingerprint(secret: str, hashed_password: str) -> str:
     """
     digest = hmac.new(secret.encode(), b"password:" + hashed_password.encode(), hashlib.sha256)
     return base64.urlsafe_b64encode(digest.digest()[:16]).rstrip(b"=").decode()
+
+
+def known_browser_mark(secret: str, user_id: object) -> str:
+    """What a browser keeps for an account: keyed, so nobody can make one for another account."""
+    digest = hmac.new(secret.encode(), b"known-browser:" + str(user_id).encode(), hashlib.sha256)
+    return base64.urlsafe_b64encode(digest.digest()[:16]).rstrip(b"=").decode()
+
+
+def known_browser_marks(cookie: str | None) -> list[str]:
+    # Only what looks like a mark: whatever else the cookie held, it stays small.
+    return [mark for mark in (cookie or "").split(".") if re.fullmatch(r"[A-Za-z0-9_-]{22}", mark)]
+
+
+def remember_account(marks: list[str], mark: str) -> str:
+    """The cookie's new value: this account first, then the others it had."""
+    return ".".join([mark, *(known for known in marks if known != mark)][:KNOWN_BROWSER_MAX_ACCOUNTS])
 
 
 class PasswordBoundJWTStrategy(JWTStrategy):

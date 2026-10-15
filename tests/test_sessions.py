@@ -49,8 +49,8 @@ def test_sign_in_sets_an_httponly_session_cookie(client, prefix):
     response = sign_in(client, prefix)
     assert response.status_code == 204
 
-    cookie = response.headers["set-cookie"].lower()
-    assert cookie.startswith(f"{SESSION_COOKIE_NAME}=")
+    # Not the one that marks the browser as known, set too.
+    [cookie] = [c.lower() for c in response.headers.get_list("set-cookie") if c.startswith(f"{SESSION_COOKIE_NAME}=")]
     for attribute in ("httponly", "samesite=lax", "secure", f"path={prefix or '/'}",
                       f"max-age={SESSION_LIFETIME_SECONDS}"):
         assert attribute in cookie

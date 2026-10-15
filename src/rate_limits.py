@@ -1,3 +1,4 @@
+import hashlib
 import time
 
 from fastapi import HTTPException, Request
@@ -35,6 +36,9 @@ EMAILS_PER_ADDRESS = parse(setting("EMAILS_PER_ADDRESS", "3/hour"))
 EMAIL_REQUESTS_PER_IP = parse(setting("EMAIL_REQUESTS_PER_IP", "10/hour"))
 REGISTRATIONS_PER_IP = parse(setting("REGISTRATIONS_PER_IP", "10/hour"))
 PASSWORD_CHANGE_FAILURES_PER_ACCOUNT = parse(setting("PASSWORD_CHANGE_FAILURES_PER_ACCOUNT", "5/15minutes"))
+
+# API clients without cookies look new at every sign-in: one notice each per 30 days.
+API_CLIENT_NOTICES = parse("1/30days")
 
 
 def client_ip(request: Request) -> str:
@@ -101,6 +105,13 @@ async def email_requested(request: Request, address: object) -> None:
 async def login_succeeded(request: Request, email: str) -> None:
     # Only consecutive failures count towards the per-account login limit.
     await limiter.clear(LOGIN_FAILURES_PER_ACCOUNT, "login-failures", client_ip(request), normalize(email))
+
+
+async def api_client_notice_due(request: Request, user_id: object) -> bool:
+    """Whether to email the owner about this API client, told apart by IP address and User-Agent."""
+    # Hashed: the header can be long.
+    user_agent = hashlib.sha256(request.headers.get("user-agent", "").encode()).hexdigest()
+    return await limiter.hit(API_CLIENT_NOTICES, "api-client-notice", str(user_id), client_ip(request), user_agent)
 
 
 async def current_password_attempted(user_id: object) -> None:

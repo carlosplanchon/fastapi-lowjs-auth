@@ -6,7 +6,7 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 ## What's included
 
 - Sign-up and sign-in with email and password, or with Google.
-- Email verification, password reset, and notices when the password changes or the account is deleted.
+- Email verification, password reset, and notices when a new device signs in, the password changes or the account is deleted.
 - An account page:
   - change the password;
   - change the email, approved from the current address and confirmed from the new one;
@@ -39,7 +39,7 @@ The app lives in `src/`:
 - `authentication.py`: how requests sign in (the session cookie, Bearer JWTs) and the dependencies that give routes the current user, like `CurrentUser`.
 - `account.py`: the account page's routes: signed-in devices, password, email and deletion.
 - `google_sign_in.py`: signing in with Google.
-- `sessions.py`: sessions stored as hashes, with their device and last use, and JWTs tied to the password.
+- `sessions.py`: sessions stored as hashes, with their device and last use, the cookie that recognizes browsers, and JWTs tied to the password.
 - `database.py`, `models.py` and `migrations/`: the database connection, the tables and their migrations.
 - `rate_limits.py`, `origin_check.py`, `security_headers.py` and `mailer.py`: rate limiting, the cross-site check, the security headers and sending emails.
 - `shared.py`: reads `config.toml`.
@@ -75,7 +75,7 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 ## Sessions
 
 - Browsers sign in through `/auth/cookie/login`. The session lives in an HttpOnly cookie, so JavaScript (and an XSS) can't read it. It is SameSite=Lax, Secure when `PUBLIC_URL` is https, and scoped to `ROOT_PATH`.
-- The cookie is called `lowjs_session` (`SESSION_COOKIE_NAME` in `src/sessions.py`) rather than `session`, a common default. Under `ROOT_PATH` the browser also sends the cookies of an app at the domain's root, after this app's own, and only the last cookie of each name is read. Two copies of this app on one domain, one under the other's path, need different names.
+- The cookie is called `lowjs_session` (`SESSION_COOKIE_NAME` in `src/sessions.py`) rather than `session`, a common default. Under `ROOT_PATH` the browser also sends the cookies of an app at the domain's root, after this app's own, and only the last cookie of each name is read. Two copies of this app on one domain, one under the other's path, need different names. That goes for `lowjs_known_browser` too (`KNOWN_BROWSER_COOKIE_NAME`, see [Emails](#emails)).
 - Each session is a row in the database that stores only a hash of the cookie's token.
   - Signing out ends it for real. Resetting the password, or Google taking over an unverified account, ends every session of the account.
   - Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
@@ -122,6 +122,11 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
 - Changing the email sends an approval link to the current address, then a confirmation link to the new one, and a notice to the old one once it's done (see [Account](#account)).
 - Changing or resetting the password emails a "Your password was changed" notice. If it wasn't the owner, they find out and can take the account back with a reset link, which always reaches them because the email only changes with the current address's approval.
 - Deleting an account emails a "Your account was deleted" notice, but only to verified addresses: anyone can sign up someone else's address, and signing up and deleting over and over would flood it.
+- Signing in from a device the account hasn't been used on emails a "New sign-in to your account" notice: the device and IP address, as the list of signed-in devices shows them, and what to do if it wasn't the owner.
+  - Only verified addresses get it, for the same reason as the deletion notice. Until then, signing in just marks the browser, so the one used to sign up isn't new once the address is verified.
+  - Browsers are recognized by a cookie, `lowjs_known_browser` (`KNOWN_BROWSER_*` in `src/sessions.py`). It's HttpOnly, lasts a year from the last sign-in and remembers up to 10 accounts, each as a keyed hash, so nobody can make one up for an account. Signing out keeps it. Another browser, a private window or cleared cookies count as a new device.
+  - Signing in with Google gets the notice too, except when it creates the account or takes over an unverified one: whoever signs in owns the address.
+  - API clients that keep no cookies would look new at every sign-in, and their tokens last an hour. So sign-ins through `/auth/jwt/login` are also told apart by IP address and User-Agent: one notice each per 30 days (`API_CLIENT_NOTICES` in `src/rate_limits.py`, kept where the rate limit counters are).
 - Links are built from `[app] PUBLIC_URL`, never from the request's Host header, so a forged Host can't redirect reset links. Links expire after 60 minutes.
 - A link opens a page with a button, and nothing happens until the person clicks. Mail scanners open links too: a verification that ran on its own could verify an address its owner never saw.
 - The emails and pages that verify an address or confirm a new one tell whoever didn't ask for them not to confirm. Anyone can type someone else's address when signing up or changing their email; if the owner confirmed it, that account would be verified with a password someone else knows, and signing in with Google would later take the owner into it.

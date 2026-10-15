@@ -1,10 +1,11 @@
 import asyncio
 import secrets
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 import jwt
-from fastapi import BackgroundTasks, Depends, Request
+from fastapi import BackgroundTasks, Depends, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi_users import (
     BaseUserManager,
@@ -21,7 +22,16 @@ import mailer
 import rate_limits
 from database import get_user_db
 from models import AccessToken, User
-from sessions import password_fingerprint, session_expiry_cutoff
+from sessions import (
+    KNOWN_BROWSER_COOKIE_NAME,
+    KNOWN_BROWSER_LIFETIME_SECONDS,
+    describe_device,
+    known_browser_mark,
+    known_browser_marks,
+    password_fingerprint,
+    remember_account,
+    session_expiry_cutoff,
+)
 from shared import APP_PUBLIC_URL, JWT_SIGNING_SECRET_KEY, ROOT_PREFIX
 
 MIN_PASSWORD_LENGTH = 8
@@ -311,9 +321,64 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             f"The email of your account is now {new_email}: sign in with it from now on.\n",
         )
 
-    async def on_after_login(self, user: User, request: Request | None = None, response=None) -> None:
-        if request is not None:
-            await rate_limits.login_succeeded(request, user.email)
+    async def on_after_login(
+        self,
+        user: User,
+        request: Request | None = None,
+        response: Response | None = None,
+        *,
+        with_google: bool = False,
+        announce: bool = True,
+    ) -> None:
+        if request is None:
+            return
+        await rate_limits.login_succeeded(request, user.email)
+        marks = known_browser_marks(request.cookies.get(KNOWN_BROWSER_COOKIE_NAME))
+        mark = known_browser_mark(JWT_SIGNING_SECRET_KEY, user.id)
+        api_client = request.scope["route"].name == "auth:jwt.login"
+        if (
+            announce
+            # Verified addresses only, like the deletion notice: until then sign-ins just mark the browser.
+            and user.is_verified
+            and mark not in marks
+            # Last, since it counts the notice.
+            and (not api_client or await rate_limits.api_client_notice_due(request, user.id))
+        ):
+            self.send_sign_in_notice(user, request, with_google)
+        if response is not None:
+            response.set_cookie(
+                KNOWN_BROWSER_COOKIE_NAME,
+                remember_account(marks, mark),
+                max_age=KNOWN_BROWSER_LIFETIME_SECONDS,
+                path=ROOT_PREFIX or "/",
+                secure=APP_PUBLIC_URL.startswith("https://"),
+                httponly=True,
+                samesite="lax",
+            )
+
+    def send_sign_in_notice(self, user: User, request: Request, with_google: bool) -> None:
+        if with_google:
+            advice = (
+                "someone else can get into your Google account: secure it right away, "
+                "then sign that device out from your account page."
+            )
+        else:
+            advice = (
+                "someone else knows your password: choose a new one right away with "
+                "\"Forgot your password?\" on the sign-in page. That also signs out every device."
+            )
+        self.background_tasks.add_task(
+            mailer.send_email,
+            user.email,
+            "New sign-in to your account",
+            f"Someone just signed in to your account{' with Google' if with_google else ''} "
+            "from a device we don't recognize:\n\n"
+            f"{describe_device(request.headers.get('user-agent'))}\n"
+            f"IP address {rate_limits.client_ip(request)}\n"
+            f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC\n\n"
+            f"If it was you, you can ignore this email. If it wasn't, {advice}\n\n"
+            f"{LOGIN_URL}\n",
+        )
 
 
 async def get_user_manager(
