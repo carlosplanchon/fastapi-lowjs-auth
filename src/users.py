@@ -15,13 +15,13 @@ from fastapi_users import (
 )
 from fastapi_users.db import SQLAlchemyUserDatabase
 from fastapi_users.jwt import decode_jwt, generate_jwt
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 import mailer
 import rate_limits
 from database import get_user_db
 from models import AccessToken, User
-from sessions import password_fingerprint
+from sessions import password_fingerprint, session_expiry_cutoff
 from shared import APP_PUBLIC_URL, JWT_SIGNING_SECRET_KEY, ROOT_PREFIX
 
 MIN_PASSWORD_LENGTH = 8
@@ -223,6 +223,19 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     async def delete_sessions(self, user: User) -> None:
         # Without committing: for callers that commit it together with their own change.
         await self.user_db.session.execute(delete(AccessToken).where(AccessToken.user_id == user.id))
+
+    async def active_sessions(self, user: User) -> list[AccessToken]:
+        statement = select(AccessToken).where(
+            AccessToken.user_id == user.id, AccessToken.created_at >= session_expiry_cutoff()
+        )
+        return list(await self.user_db.session.scalars(statement))
+
+    async def end_session(self, user: User, stored_token: str) -> None:
+        # Also by user: a session of another account matches no row.
+        await self.user_db.session.execute(
+            delete(AccessToken).where(AccessToken.user_id == user.id, AccessToken.token == stored_token)
+        )
+        await self.user_db.session.commit()
 
     async def on_before_delete(self, user: User, request: Request | None = None) -> None:
         # The database would cascade too, but SQLite only does with foreign keys on.

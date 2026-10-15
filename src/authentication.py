@@ -10,6 +10,7 @@ from fastapi_users.authentication import (
 )
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyAccessTokenDatabase
 
+import rate_limits
 from database import get_access_token_db
 from models import User
 from sessions import (
@@ -34,9 +35,16 @@ cookie_transport = CookieTransport(
 
 
 def get_database_strategy(
+    request: Request,
     access_token_db: Annotated[SQLAlchemyAccessTokenDatabase, Depends(get_access_token_db)],
 ) -> HashedDatabaseStrategy:
-    return HashedDatabaseStrategy(access_token_db, lifetime_seconds=SESSION_LIFETIME_SECONDS)
+    return HashedDatabaseStrategy(
+        access_token_db,
+        lifetime_seconds=SESSION_LIFETIME_SECONDS,
+        # Where a new session signs in from, for the list of signed-in devices.
+        user_agent=request.headers.get("user-agent"),
+        ip_address=rate_limits.client_ip(request),
+    )
 
 
 SessionStrategyDep = Annotated[HashedDatabaseStrategy, Depends(get_database_strategy)]

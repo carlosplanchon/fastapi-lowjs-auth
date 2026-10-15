@@ -10,14 +10,14 @@ FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + f
 - An account page:
   - change the password;
   - change the email, approved from the current address and confirmed from the new one;
-  - sign out of other devices;
+  - see the devices signed in to the account, and sign out any of them or all the others at once;
   - delete the account.
 - Revocable sessions in HttpOnly cookies, plus short-lived Bearer JWTs for API clients.
 - Protection against cross-site requests, rate limiting, security headers and a strict Content Security Policy.
 - A frontend with no JavaScript build: Jinja templates, Alpine.js (its CSP build) and Tailwind, with no CDNs.
 - Alembic migrations, a Dockerfile with a Docker Compose template, and CI with tests, lint, an image check and Dependabot.
 
-It doesn't include two-factor authentication, passkeys, a sign-in history or a list of signed-in devices (the account page can only sign out all the others at once). It hasn't had an independent security audit either: review it before using it in production.
+It doesn't include two-factor authentication, passkeys or a sign-in history. It hasn't had an independent security audit either: review it before using it in production.
 
 ## Quick start
 
@@ -37,9 +37,9 @@ The app lives in `src/`:
 - `auth_backend_api.py`: the app itself: middleware, static files, fastapi-users' routes and the sign-in page. `main_api.py` runs it with uvicorn.
 - `users.py`: the user manager, which hooks into fastapi-users (password rules, what happens after signing up, a reset or a deletion), and the emails it sends.
 - `authentication.py`: how requests sign in (the session cookie, Bearer JWTs) and the dependencies that give routes the current user, like `CurrentUser`.
-- `account.py`: the account page's routes: password, email, other devices and deletion.
+- `account.py`: the account page's routes: signed-in devices, password, email and deletion.
 - `google_sign_in.py`: signing in with Google.
-- `sessions.py`: sessions stored as hashes, and JWTs tied to the password.
+- `sessions.py`: sessions stored as hashes, with their device and last use, and JWTs tied to the password.
 - `database.py`, `models.py` and `migrations/`: the database connection, the tables and their migrations.
 - `rate_limits.py`, `origin_check.py`, `security_headers.py` and `mailer.py`: rate limiting, the cross-site check, the security headers and sending emails.
 - `shared.py`: reads `config.toml`.
@@ -80,7 +80,12 @@ The schema is managed with Alembic (`src/migrations/`): the app doesn't create t
   - Signing out ends it for real. Resetting the password, or Google taking over an unverified account, ends every session of the account.
   - Sessions last 14 days (`SESSION_LIFETIME_SECONDS` in `src/sessions.py`).
   - Expired sessions are deleted too: a user's own when they sign in again, and all of them every time the app starts.
-- The account page can sign out of other devices (`POST /auth/cookie/logout-others`) without changing the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
+- The account page lists the devices signed in to the account (`GET /auth/sessions`): browser and system (read from the User-Agent), IP address, when each one signed in and when it was last used. Bearer JWTs aren't stored, so they don't show up.
+  - Each session keeps the User-Agent and IP address it signed in with, and they go away with it. Its last use is saved at most every 5 minutes (`LAST_USED_RESOLUTION_SECONDS` in `src/sessions.py`), so most requests don't write to the database.
+  - The list names each session by a hash of its row's key: nothing in it can sign anyone in.
+  - Any of them can be signed out (`DELETE /auth/sessions/{id}`). Signing out this browser's own works like signing out.
+  - "Sign out of all other devices" (`POST /auth/cookie/logout-others`) doesn't change the password. It ends every session of the account, this one too, and gives this browser a new one, so a copy of its old cookie stops working as well.
+  - Behind a reverse proxy, the addresses are right only if uvicorn trusts the proxy (see [Rate limiting](#rate-limiting)).
 - API clients (scripts, mobile apps, Swagger's "Authorize") can use Bearer JWTs from `/auth/jwt/login`.
   - They carry a fingerprint of the password, so they stop working as soon as it changes: a change, a reset, or Google taking over an unverified account. The client then signs in again.
   - They can't be revoked any other way (signing out doesn't end them), so they last one hour.

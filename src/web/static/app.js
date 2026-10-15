@@ -42,7 +42,7 @@ document.addEventListener("alpine:init", () => {
       /* state ----------------------------------------------------------- */
       view: "login",
       email: "", password: "", password2: "", currentPassword: "", newEmail: "",
-      error: "", notice: "", user: {}, resetToken: "", busy: false,
+      error: "", notice: "", user: {}, resetToken: "", busy: false, sessions: [],
       // From the links in emails, kept until the user clicks the button.
       verifyToken: "", approveEmailToken: "", confirmEmailToken: "",
 
@@ -309,11 +309,52 @@ document.addEventListener("alpine:init", () => {
           // The server ends every session, this one too, and sets a new cookie here.
           await this.api("/auth/cookie/logout-others", { method: "POST" });
           this.notice = "Other devices have been signed out.";
+          await this.loadSessions();
         } catch (e) {
           this.sessionActionFailed(e);
         } finally {
           this.busy = false;
         }
+      },
+
+      async openDevices() {
+        this.show("devices");
+        this.sessions = [];
+        await this.loadSessions();
+      },
+
+      async loadSessions() {
+        try {
+          const sessions = await this.api("/auth/sessions");
+          // In the browser's language and time zone.
+          const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+          this.sessions = sessions.map((session) => ({
+            id: session.id,
+            current: session.current,
+            device: session.device,
+            ipAddress: session.ip_address ? `IP address ${session.ip_address}` : "",
+            lastUsed: session.current ? "Active now" : `Last active ${when(session.last_used_at)}`,
+            signedIn: `Signed in ${when(session.signed_in_at)}`,
+          }));
+        } catch (e) {
+          this.sessionActionFailed(e);
+        }
+      },
+
+      async endSession(id) {
+        if (this.busy) return;
+        this.error = this.notice = "";
+        this.busy = true;
+        try {
+          await this.api(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+          this.notice = "That device has been signed out.";
+        } catch (e) {
+          if (e.status === 404) this.notice = "That device was already signed out.";
+          else this.sessionActionFailed(e);
+        } finally {
+          this.busy = false;
+        }
+        if (this.view === "devices") await this.loadSessions();
       },
 
       async deleteAccount() {

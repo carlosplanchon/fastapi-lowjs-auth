@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi_users import InvalidPasswordException
 from pydantic import BaseModel, EmailStr
@@ -12,6 +14,7 @@ from authentication import (
     renew_this_session,
 )
 from models import User
+from sessions import describe_device, hash_token
 from users import (
     APPROVE_EMAIL_AUDIENCE,
     CONFIRM_EMAIL_AUDIENCE,
@@ -20,12 +23,63 @@ from users import (
     UserUpdate,
 )
 
-# The account page's routes: sign out of other devices, change the password,
-# delete the account, change the email.
+# The account page's routes: the signed-in devices, change the password, delete
+# the account, change the email.
 router = APIRouter(tags=["auth"])
 
 
 # --> SESSIONS:
+class SignedInSession(BaseModel):
+    id: str
+    device: str
+    user_agent: str | None
+    ip_address: str | None
+    signed_in_at: datetime
+    last_used_at: datetime
+    current: bool
+
+
+@router.get("/auth/sessions", name="auth:list_sessions")
+async def list_sessions(user_and_token: CurrentUserAndToken, user_manager: UserManagerDep) -> list[SignedInSession]:
+    user, token = user_and_token
+    sessions = [
+        SignedInSession(
+            # A hash of the row's key, itself a hash of the token: signs no one in.
+            id=hash_token(session.token),
+            device=describe_device(session.user_agent),
+            user_agent=session.user_agent,
+            ip_address=session.ip_address,
+            signed_in_at=session.created_at,
+            last_used_at=session.last_used_at or session.created_at,
+            # This browser's; with a Bearer JWT, none is.
+            current=session.token == hash_token(token),
+        )
+        for session in await user_manager.active_sessions(user)
+    ]
+    # This browser first, then the most recently used.
+    return sorted(sessions, key=lambda session: (not session.current, -session.last_used_at.timestamp()))
+
+
+@router.delete(
+    "/auth/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    name="auth:end_session",
+)
+async def end_session(session_id: str, user_and_token: CurrentUserAndToken, user_manager: UserManagerDep):
+    user, token = user_and_token
+    sessions = await user_manager.active_sessions(user)
+    ended = next((session for session in sessions if hash_token(session.token) == session_id), None)
+    if ended is None:
+        # Already over, or another account's.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "SESSION_NOT_FOUND")
+    await user_manager.end_session(user, ended.token)
+    if ended.token == hash_token(token):
+        # This browser's own: signed out, as with /auth/cookie/logout.
+        return await cookie_transport.get_logout_response()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/auth/cookie/logout-others",
     status_code=status.HTTP_204_NO_CONTENT,
