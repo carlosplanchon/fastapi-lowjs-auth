@@ -168,7 +168,7 @@ No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`
 
 ## Tests and CI
 
-- `uv run pytest` runs the tests (with SQLite and a simulated Google login, no Postgres needed).
+- `uv run pytest` runs the tests (with SQLite and a simulated Google login, no Postgres needed), in parallel: one process per CPU, with pytest-xdist. Add `-n0` to run them in a single process: it's quicker for a single test, and debuggers and `-s` need it.
 - To run them on Postgres too, as CI does, give them a server where they can create databases: each test creates one of its own and drops it afterwards. For example, `docker run --rm -d -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5433:5432 postgres:17-alpine`, a few seconds for it to start, then `TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5433/postgres uv run pytest`.
 - `uv run ruff check` runs the linter: ruff's default rules (likely bugs, modern syntax, import order) plus a few more error rules (`pyproject.toml`). `uv run ruff check --fix` fixes most findings. Ruff's version is pinned in `uv.lock`, so its defaults only change when Dependabot updates it, and any new finding shows up in that pull request's CI.
 

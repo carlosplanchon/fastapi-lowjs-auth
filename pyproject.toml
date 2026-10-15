@@ -22,12 +22,14 @@ dev = [
     "ipython>=9.2.0",
     "prettyprinter>=0.18.0",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.17.0",
 ]
 
 [tool.pytest]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = ["-n", "logical"]
 
 [tool.ruff.lint]
 # Ruff's default rules (likely bugs, modern syntax, import order...), plus these
