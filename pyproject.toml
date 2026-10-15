@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-lowjs-auth"
-version = "0.1.0"
+version = "1.0.0"
 description = "LowJS Authentication FastAPI template. Supports Google Authentication and Email / Password."
 readme = "README.md"
 requires-python = ">=3.14"

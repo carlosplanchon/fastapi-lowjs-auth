@@ -1,4 +1,4 @@
-# Change the name to config.toml fill with the appropiate values in production.
+# Change the name to config.toml and fill it with the appropriate values in production.
 
 [app]
 # Path prefix the app is served under, without slashes (e.g. "myapp").
