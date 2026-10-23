@@ -1,3 +1,5 @@
+![FastAPI-LowJS-Auth](https://raw.githubusercontent.com/carlosplanchon/fastapi-lowjs-auth/main/assets/banner.jpg)
+
 # fastapi-lowjs-auth
 [![Tests](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml/badge.svg)](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml)
 
