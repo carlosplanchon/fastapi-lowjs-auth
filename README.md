@@ -1,9 +1,14 @@
+# fastapi-lowjs-auth
+
 ![FastAPI-LowJS-Auth](https://raw.githubusercontent.com/carlosplanchon/fastapi-lowjs-auth/main/assets/banner.jpg)
 
-# fastapi-lowjs-auth
-[![Tests](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml/badge.svg)](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml)
-
 FastAPI LowJS auth system with backend and frontend. FastAPI + fastapi-users + fastapi-sso / HTML + TailwindCSS + AlpineJS
+
+[![Tests](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml/badge.svg)](https://github.com/carlosplanchon/fastapi-lowjs-auth/actions/workflows/tests.yml)
+[![Version](https://img.shields.io/github/v/tag/carlosplanchon/fastapi-lowjs-auth.svg)](https://github.com/carlosplanchon/fastapi-lowjs-auth/tags)
+[![Python version](https://img.shields.io/python/required-version-toml.svg?tomlFilePath=https://raw.githubusercontent.com/carlosplanchon/fastapi-lowjs-auth/main/pyproject.toml)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/carlosplanchon/fastapi-lowjs-auth)
 
 ## What's included
 
