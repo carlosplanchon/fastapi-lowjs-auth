@@ -3,7 +3,10 @@ name = "fastapi-lowjs-auth"
 version = "1.0.0"
 description = "LowJS Authentication FastAPI template. Supports Google Authentication and Email / Password."
 readme = "README.md"
-requires-python = ">=3.14"
+# Every Python version still getting security fixes (October 2026). CI runs the
+# tests on each of them (.github/workflows/tests.yml); ruff takes the oldest as
+# its target and rejects newer syntax. The Docker image uses one of them (Dockerfile).
+requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.20.0",
     "asyncpg>=0.32.0",

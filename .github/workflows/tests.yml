@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  tests:
+  lint:
     runs-on: ubuntu-latest
     steps:
       # Actions pinned by commit: a tag can be moved, a commit can't.
@@ -24,11 +24,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      # Ruff's findings don't depend on the Python it runs under: once is enough.
+      # It takes the oldest version in requires-python as its target, so syntax
+      # newer than that fails here.
       - name: Lint
         run: uv run ruff check
-
-      - name: Run tests
-        run: uv run pytest
 
       - name: Check that the compiled CSS is up to date
         run: |
@@ -36,10 +36,18 @@ jobs:
           git diff --exit-code -- src/web/static/app.css \
             || { echo "::error::src/web/static/app.css is out of date: run 'bash build_css.sh' and commit it."; exit 1; }
 
-  # The same tests on Postgres, where transactions and migrations behave as in
-  # production. Each test creates and drops a database of its own on this server.
-  tests-postgres:
+  # The tests on every Python version the app supports (requires-python in
+  # pyproject.toml): on SQLite, then on Postgres, where transactions and migrations
+  # behave as in production. Each test creates and drops a database of its own on
+  # this server.
+  tests:
     runs-on: ubuntu-latest
+    strategy:
+      # A failure on one version doesn't cancel the others: the results show which
+      # versions it affects.
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
     services:
       postgres:
         # The same Postgres as the compose templates.
@@ -59,12 +67,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # python-version sets UV_PYTHON, which overrides .python-version: uv installs
+      # that Python and builds the environment with it.
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest
 
       - name: Run tests on Postgres
         run: uv run pytest

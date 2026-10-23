@@ -28,7 +28,7 @@ It doesn't include two-factor authentication, passkeys or a sign-in history. It 
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/), Docker with Compose, and tmux.
+You need [uv](https://docs.astral.sh/uv/), Docker with Compose, and tmux. uv installs Python itself: the version in `.python-version` (3.14). The app runs on Python 3.11 to 3.15 (`requires-python` in `pyproject.toml`).
 
 1. `cp src/config_template.toml src/config.toml` and fill it in.
 2. `cp src/web/db/docker-compose_template.yaml src/web/db/docker-compose.yml` and set the same Postgres credentials. `DB_PORT` in `config.toml` must match the published port.
@@ -69,7 +69,7 @@ To run Postgres and the API with Docker Compose:
 - With several replicas, don't let each one migrate as it starts: run `alembic upgrade head` once per deploy, as its own step (like the command above), and give the replicas `uvicorn auth_backend_api:app --app-dir src` as their command.
 - uvicorn takes its settings from `UVICORN_*` variables (`UVICORN_PORT`, ...). More workers (`WEB_CONCURRENCY`) or replicas need a shared store for the rate limits (`STORAGE_URI`, see [Rate limiting](#rate-limiting)).
 - Passwords are hashed with Argon2 (about 0.2 s and 64 MiB each) in threads, two at a time per worker (`HASHING_SLOTS` in `src/users.py`), so sign-ins don't hold up other requests.
-- The Python and uv images are pinned by digest, and Dependabot proposes their updates (see [Tests and CI](#tests-and-ci)). To update one by hand, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`.
+- The Python and uv images are pinned by digest, and Dependabot proposes their updates (see [Tests and CI](#tests-and-ci)). To update one by hand, change its tag and use the digest from `docker buildx imagetools inspect <image>:<tag>`. The image's Python can be any version the app supports (3.11 to 3.15): CI tests them all.
 
 ## Database migrations
 
@@ -186,13 +186,14 @@ No CDNs at runtime: the page loads its CSS, JS and images from `src/web/static/`
 ## Tests and CI
 
 - `uv run pytest` runs the tests (with SQLite and a simulated Google login, no Postgres needed), in parallel: one process per CPU, with pytest-xdist. Add `-n0` to run them in a single process: it's quicker for a single test, and debuggers and `-s` need it.
+- They run on every Python version in `requires-python` (3.11 to 3.15) in CI. To try one locally, `uv run --isolated --python 3.11 pytest` runs them in a temporary environment with that version, leaving `.venv` alone.
 - To run them on Postgres too, as CI does, give them a server where they can create databases: each test creates one of its own and drops it afterwards. For example, `docker run --rm -d -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5433:5432 postgres:17-alpine`, a few seconds for it to start, then `TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5433/postgres uv run pytest`.
 - `uv run ruff check` runs the linter: ruff's default rules (likely bugs, modern syntax, import order) plus a few more error rules (`pyproject.toml`). `uv run ruff check --fix` fixes most findings. Ruff's version is pinned in `uv.lock`, so its defaults only change when Dependabot updates it, and any new finding shows up in that pull request's CI.
 
 GitHub Actions (`.github/workflows/tests.yml`) runs on every push to `main` and every pull request:
 
-- the linter and the tests, and a check that `src/web/static/app.css` matches the templates;
-- the tests again on Postgres (the compose templates' version), where transactions and migrations behave as in production;
+- the linter, and a check that `src/web/static/app.css` matches the templates;
+- the tests on every Python version the app supports (3.11 to 3.15): on SQLite, then again on Postgres (the compose templates' version), where transactions and migrations behave as in production;
 - the Docker image, built and started from the compose template with Postgres. It checks that the API serves the sign-in page, and that no password from `config.toml` or the compose file ended up in the image.
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the actions, the Python packages and the Docker images.
