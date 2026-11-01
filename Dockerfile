@@ -2,10 +2,10 @@
 # keeps them up to date (.github/dependabot.yml); it only reads FROM lines.
 
 # uv's image, only for its binary.
-FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
 
 # Build stage: uv installs the locked dependencies, without the dev group, into /app/.venv.
-FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS build
+FROM python:3.14.9-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS build
 COPY --from=uv /uv /bin/uv
 # Compile the packages to bytecode now: at run time the app's user can't write to /app.
 # Copy files out of the cache mount instead of linking them, and use the image's
@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project
 
 # Final stage: the same Python, the environment and the code. No uv, no dev tools.
-FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.14.9-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
 # An unprivileged user. UID 1000 is usually your user on the host, so it can read
 # the config.toml mounted from there.
 RUN groupadd --system --gid 1000 app \
